@@ -18,13 +18,13 @@ module.exports = async (req, res) => {
 
     const id = crypto.randomUUID();
     const token = crypto.randomBytes(32).toString('hex');
+    // Keep upload preparation on the simplest Sandbox configuration.
+    // The upload endpoint only needs a public HTTP port; processing resources
+    // are requested later by the analysis worker.
     const sb = await Sandbox.create({
       name: 'clip-job-' + id,
-      persistent: true,
-      timeout: 40 * 60 * 1000,
-      resources: { vcpus: 4 },
-      networkPolicy: 'allow-all',
-      ports: [8787, 8788]
+      timeout: 30 * 60 * 1000,
+      ports: [8788]
     });
 
     await sb.writeFiles([{
