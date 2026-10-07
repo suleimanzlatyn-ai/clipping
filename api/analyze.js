@@ -341,10 +341,10 @@ exports.default = async (req, res) => {
     const sb = await Sandbox.getOrCreate({
       name: 'suleimanzlatyn-worker',
       runtime: 'node24',
-      timeout: 86400000,
+      timeout: 45 * 60 * 1000,
       resources: { vcpus: 4 },
       ports: [8787],
-      networkPolicy: { mode: 'allow-all' }
+      networkPolicy: 'allow-all'
     });
 
     const id = crypto.randomUUID();
