@@ -337,11 +337,11 @@ module.exports = async (req, res) => {
     const { Sandbox } = await import('@vercel/sandbox');
     const sb = await Sandbox.create({
       name: 'clip-job-' + id,
-      runtime: 'node24',
+      persistent: true,
       timeout: 45 * 60 * 1000,
       resources: { vcpus: 4 },
-      ports: [8787],
-      networkPolicy: 'allow-all'
+      networkPolicy: 'allow-all',
+      ports: [8787]
     });
 
     await sb.writeFiles([{
@@ -357,14 +357,16 @@ module.exports = async (req, res) => {
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
     await sb.runCommand({
-      cmd: 'bash',
-      args: ['-lc', 'nohup node ' + workerPath + ' >/workspace/jobs/' + id + '/worker.log 2>&1 &'],
+      cmd: 'node',
+      args: [workerPath],
+      detached: true,
       env: { GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
-      cmd: 'bash',
-      args: ['-lc', 'mkdir -p /workspace/output; pgrep -f "http.server 8787" >/dev/null || nohup python3 -m http.server 8787 --directory /workspace >/workspace/http.log 2>&1 &'],
+      cmd: 'python3',
+      args: ['-m', 'http.server', '8787', '--directory', '/workspace'],
+      detached: true,
       env: {}
     });
 
