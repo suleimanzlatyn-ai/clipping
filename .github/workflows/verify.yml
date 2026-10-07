@@ -13,6 +13,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node --check api/analyze.js
-      - run: node --check 'api/jobs/[id].js'
-      - run: node -e "const p=require('./package.json'); if(!p.dependencies['@google/genai']) process.exit(1)"
+      - name: Parse analyze route
+        run: node -e "const fs=require('fs'); new Function(fs.readFileSync('api/analyze.js','utf8')); console.log('analyze.js parse OK')"
+      - name: Parse job route
+        run: node -e "const fs=require('fs'); new Function(fs.readFileSync('api/jobs/[id].js','utf8')); console.log('jobs route parse OK')"
+      - name: Validate package
+        run: node -e "const p=require('./package.json'); if(!p.dependencies['@google/genai']) throw new Error('Missing @google/genai'); if(!p.dependencies['@vercel/sandbox']) throw new Error('Missing @vercel/sandbox'); console.log('package OK')"
