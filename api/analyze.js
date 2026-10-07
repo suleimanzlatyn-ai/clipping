@@ -12,7 +12,7 @@ const job = '__JOB_ID__';
 const url = __URL__;
 const sourceUrl = __SOURCE_URL__;
 const directUploadPath = __DIRECT_UPLOAD_PATH__;
-const root = process.env.CLIP_WORKSPACE_ROOT || '/workspace';
+const root = process.env.CLIP_WORKSPACE_ROOT || '/vercel/sandbox';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
 const jf = dir + '/job.json';
@@ -670,16 +670,16 @@ module.exports = async (req, res) => {
       const Sandbox = process.env.RENDER === '1' ? require('../lib/local-sandbox').LocalSandbox : (await import('@vercel/sandbox')).Sandbox;
       const sb = await Sandbox.get({ name: 'clip-job-' + jobId });
       try {
-        await sb.runCommand({ cmd: 'sh', args: ['-lc', 'test -s ' + JSON.stringify('/workspace/output/' + jobId + '/source.mp4')] });
+        await sb.runCommand({ cmd: 'sh', args: ['-lc', 'test -s ' + JSON.stringify('/vercel/sandbox/output/' + jobId + '/source.mp4')] });
       } catch {
         return res.status(409).json({ error: 'The upload has not finished yet.' });
       }
-      const script = WORKER.replaceAll('__JOB_ID__', jobId).replace('__URL__', JSON.stringify('')).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('/workspace/output/' + jobId + '/source.mp4')).replaceAll('\\${', '${').replaceAll('\\`', '`');
-      const workerPath = '/workspace/run-' + jobId + '.mjs';
+      const script = WORKER.replaceAll('__JOB_ID__', jobId).replace('__URL__', JSON.stringify('')).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('/vercel/sandbox/output/' + jobId + '/source.mp4')).replaceAll('\\${', '${').replaceAll('\\`', '`');
+      const workerPath = '/vercel/sandbox/run-' + jobId + '.mjs';
       await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
       await sb.runCommand({
         cmd: 'sh',
-        args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + jobId + '/worker.log') + ' 2>&1'],
+        args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/vercel/sandbox/jobs/' + jobId + '/worker.log') + ' 2>&1'],
         detached: true,
         env: {
           AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '',
@@ -693,7 +693,7 @@ module.exports = async (req, res) => {
           CLIP_SMART_FALLBACK: process.env.CLIP_SMART_FALLBACK || '0'
         }
       });
-      if (process.env.RENDER !== '1') await sb.runCommand({ cmd: 'python3', args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'], detached: true, env: {} });
+      if (process.env.RENDER !== '1') await sb.runCommand({ cmd: 'python3', args: ['-m', 'http.server', '8787', '--directory', '/vercel/sandbox/output'], detached: true, env: {} });
       return res.json({ jobId, status: 'queued' });
     }
 
@@ -709,7 +709,7 @@ module.exports = async (req, res) => {
     });
 
     await sb.writeFiles([{
-      path: '/workspace/jobs/' + id + '/job.json',
+      path: '/vercel/sandbox/jobs/' + id + '/job.json',
       content: Buffer.from(JSON.stringify({
         id, status: 'queued', progress: 1,
         message: 'Preparing the analysis worker…', clips: []
@@ -717,19 +717,19 @@ module.exports = async (req, res) => {
     }]);
 
     const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('')).replaceAll('\\${', '${').replaceAll('\\`', '`');
-    const workerPath = '/workspace/run-' + id + '.mjs';
+    const workerPath = '/vercel/sandbox/run-' + id + '.mjs';
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
     await sb.runCommand({
       cmd: 'sh',
-      args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
+      args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/vercel/sandbox/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
       env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', CLIP_SMART_FALLBACK: process.env.CLIP_SMART_FALLBACK || '0' }
     });
 
     if (process.env.RENDER !== '1') await sb.runCommand({
       cmd: 'python3',
-      args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'],
+      args: ['-m', 'http.server', '8787', '--directory', '/vercel/sandbox/output'],
       detached: true,
       env: {}
     });
