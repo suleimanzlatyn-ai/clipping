@@ -1,1 +1,147 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>suleimanzlatyn — AI Clip Studio</title><style>body{margin:0;background:#07080a;color:#f4f5f7;font:15px Arial,sans-serif}main{max-width:1100px;margin:auto;padding:28px}header,footer{display:flex;justify-content:space-between;align-items:center}.logo{font-weight:800;font-size:18px}.logo small{display:block;color:#748060;font-size:8px;letter-spacing:2px}.pill{font-size:10px;color:#aab09f;border:1px solid #252a30;border-radius:99px;padding:8px}.hero{text-align:center;padding:110px 0 80px}.eyebrow{font-size:10px;letter-spacing:3px;color:#c8ff3d;font-weight:700}.hero h1{font-size:clamp(48px,7vw,84px);line-height:.98;letter-spacing:-4px;margin:18px}.hero h1 em{color:#d9ff79;font-style:normal}.hero p{max-width:700px;margin:0 auto;color:#a4a9b2;line-height:1.7;font-size:17px}.input{display:flex;max-width:760px;margin:35px auto 12px;background:#0c0e11;border:1px solid #2b3037;padding:8px;border-radius:16px}.input input{flex:1;background:none;border:0;outline:0;color:#fff;padding:15px;font-size:15px}.input button{background:#c8ff3d;border:0;border-radius:11px;padding:0 22px;font-weight:800}.features,.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.features div{background:#0e1014;border:1px solid #20242b;border-radius:18px;padding:22px}.features b,.features span{display:block;margin-top:8px}.features span,.status{color:#858c97;font-size:12px}.results{border-top:1px solid #20242b;margin-top:70px;padding-top:45px}.head{display:flex;justify-content:space-between}.count{font-size:40px;color:#c8ff3d;font-weight:800}.progress{height:5px;background:#1a1d21;margin:24px 0 10px}.progress span{display:block;height:100%;background:#c8ff3d}.grid{grid-template-columns:repeat(4,1fr);margin-top:25px}.clip{background:#0e1014;border:1px solid #20242b;border-radius:15px;overflow:hidden;color:#fff;text-decoration:none}.thumb{aspect-ratio:9/12;background:linear-gradient(145deg,#1a2111,#08090b);display:flex;align-items:end;justify-content:space-between;padding:12px}.thumb strong{color:#c8ff3d;font-size:22px}.thumb span{font-size:8px}.ct{padding:12px}.ct b{font-size:13px}.ct small{display:block;color:#69717c;margin-top:6px;font-size:10px}.error{background:#251317;border:1px solid #57262f;color:#ff9ca7;padding:14px;border-radius:12px;margin:18px 0}footer{border-top:1px solid #20242b;margin-top:60px;padding:25px;color:#646b76;font-size:11px}@media(max-width:800px){main{padding:18px}.pill{display:none}.hero{padding:75px 0 55px}.hero h1{letter-spacing:-2px}.input{flex-direction:column}.input button{height:50px}.features{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}} </style></head><body><main><header><div class="logo">suleimanzlatyn<small>AI CLIP STUDIO</small></div><span class="pill">PRIVATE • PERSONAL USE</span></header><section class="hero"><div class="eyebrow">AI SHORT-FORM INTELLIGENCE</div><h1>Turn long videos into<br><em>high-retention clips.</em></h1><p>Paste an authorized YouTube video. AI finds the strongest moments, reframes them for vertical and renders up to 50 clips.</p><div class="input"><input id="url" placeholder="https://youtube.com/watch?v=..."><button id="go">Find my best clips ↗</button></div><small>Best with podcasts, interviews, commentary, stories and educational long-form. <a href="/cookie-helper.html" style="color:#c8ff3d;text-decoration:none">Secure YouTube setup ↗</a></small></section><section class="features"><div><b>01 • Hook-first scoring</b><span>Curiosity, tension, payoff & quotability.</span></div><div><b>02 • Human-style selection</b><span>Context, novelty, emotion & diversity.</span></div><div><b>03 • Shorts-ready render</b><span>9:16 framing and clean downloadable output.</span></div></section><div id="msg"></div><section id="results" class="results" style="display:none"><div class="head"><div><div class="eyebrow" id="state">PROCESSING</div><h2 id="title">Building your clip vault</h2></div><div class="count"><span id="pct">0</span>%</div></div><div class="progress"><span id="bar"></span></div><p id="status" class="status"></p><div id="grid" class="grid"></div></section><footer><div class="logo">suleimanzlatyn<small>AI CLIP STUDIO</small></div><span>Private workflow • authorized content only</span></footer></main><script>const $=x=>document.getElementById(x);function err(t){$('msg').innerHTML='<div class="error">'+t+'</div>'}function safe(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}async function poll(id){try{const d=await(await fetch('/api/jobs/'+id,{cache:'no-store'})).json();$('results').style.display='block';$('pct').textContent=d.progress||0;$('bar').style.width=(d.progress||0)+'%';$('status').textContent=d.message||'';if(d.status==='done'){$('state').textContent='COMPLETE';$('title').textContent='Your clip vault';$('grid').innerHTML=(d.clips||[]).map(c=>'<a class="clip" href="'+c.url+'" download><div class="thumb"><strong>#'+String(c.rank).padStart(2,'0')+'</strong><span>DOWNLOAD</span></div><div class="ct"><b>'+safe(c.title)+'</b><small>'+c.duration+'s • Score '+c.score+'</small></div></a>').join('');return}if(d.status==='error'){err(d.error||'Processing failed');return}setTimeout(()=>poll(id),2500)}catch(e){setTimeout(()=>poll(id),4000)}}$('go').onclick=async()=>{const v=$('url').value.trim();$('msg').innerHTML='';if(!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(v))return err('Paste a valid YouTube URL.');$('go').disabled=true;$('go').textContent='Starting…';try{const r=await fetch('/api/analyze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:v})});const raw=await r.text();let d={};try{d=raw?JSON.parse(raw):{}}catch{d={error:raw||'The server returned an invalid response.'}}if(!r.ok)throw Error(d.error||'Could not start job');if(!d.jobId)throw Error('The server did not return a job ID.');poll(d.jobId)}catch(e){err(e.message)}finally{$('go').disabled=false;$('go').textContent='Find my best clips ↗'}};</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07080a">
+<title>suleimanzlatyn — AI Clip Studio</title>
+<style>
+:root{--bg:#07080a;--panel:#0d1014;--line:#232831;--text:#f4f6f8;--muted:#9299a4;--lime:#c8ff3d;--lime2:#e2ff98;--danger:#ff7e8c}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -10%,#171d12 0,#07080a 38%);color:var(--text);font:15px/1.5 Arial,sans-serif}
+main{max-width:1120px;margin:auto;padding:24px}
+header{display:flex;justify-content:space-between;align-items:center}.logo{font-size:18px;font-weight:800;letter-spacing:-.4px}.logo small{display:block;color:#758160;font-size:8px;letter-spacing:2.2px;margin-top:3px}.pill{font-size:10px;color:#adb5c0;border:1px solid var(--line);border-radius:999px;padding:8px 11px}
+.hero{text-align:center;padding:92px 0 64px}.eyebrow{font-size:10px;letter-spacing:3px;color:var(--lime);font-weight:800}.hero h1{font-size:clamp(46px,7vw,82px);line-height:.97;letter-spacing:-4px;margin:18px 0}.hero h1 em{font-style:normal;color:var(--lime2)}.hero p{max-width:720px;margin:0 auto;color:var(--muted);font-size:17px;line-height:1.7}
+.ingest{max-width:820px;margin:34px auto 10px;background:rgba(13,16,20,.86);border:1px solid var(--line);padding:9px;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.22)}
+.modebar{display:flex;gap:6px;margin-bottom:8px}.mode{flex:1;border:1px solid transparent;background:transparent;color:#8c94a0;border-radius:11px;padding:10px;font-weight:700;cursor:pointer}.mode.active{background:#151a14;color:var(--lime);border-color:#2b3424}
+.inputrow{display:flex;gap:8px}.inputrow input[type=text]{flex:1;background:#090b0e;border:1px solid #2a3038;outline:0;color:#fff;border-radius:12px;padding:15px;font-size:15px}.btn{border:0;background:var(--lime);color:#0b0e08;border-radius:12px;padding:0 20px;font-weight:900;cursor:pointer}.btn:disabled{opacity:.55;cursor:not-allowed}
+.drop{display:none;border:1px dashed #3b4431;border-radius:14px;padding:23px;background:#0a0d0b;text-align:center}.drop.show{display:block}.drop input{display:none}.drop label{display:inline-flex;align-items:center;gap:8px;border:1px solid #333b41;background:#11151a;color:#fff;border-radius:12px;padding:12px 15px;cursor:pointer}.fileinfo{color:#7e8792;font-size:12px;margin-top:10px}.uploadmeter{display:none;height:5px;background:#1a1f24;border-radius:99px;margin-top:12px;overflow:hidden}.uploadmeter.show{display:block}.uploadmeter span{display:block;height:100%;width:0;background:var(--lime);transition:width .2s}
+.note{display:block;color:#6f7782;font-size:11px;margin-top:11px}.note b{color:#9ba4af}.secure{color:var(--lime);text-decoration:none}
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:24px}.feature{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px}.feature b{display:block;font-size:13px}.feature span{display:block;color:#78808b;font-size:12px;margin-top:7px}
+#msg{max-width:820px;margin:22px auto}.error,.success{padding:14px;border-radius:12px}.error{background:#241318;border:1px solid #552730;color:#ff9da8}.success{background:#121a0d;border:1px solid #364427;color:#c9ec94}
+.results{border-top:1px solid var(--line);margin-top:68px;padding-top:44px}.head{display:flex;justify-content:space-between;gap:20px;align-items:end}.count{font-size:40px;color:var(--lime);font-weight:900}.progress{height:5px;background:#1a1d21;margin:22px 0 10px;border-radius:99px;overflow:hidden}.progress span{display:block;height:100%;width:0;background:var(--lime);transition:width .3s}.status{color:#858d98;font-size:12px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:24px}.clip{background:#0e1014;border:1px solid var(--line);border-radius:15px;overflow:hidden;color:#fff;text-decoration:none}.thumb{aspect-ratio:9/12;background:linear-gradient(145deg,#1a2111,#08090b);display:flex;align-items:flex-end;justify-content:space-between;padding:12px}.thumb strong{color:var(--lime);font-size:21px}.thumb span{font-size:8px;letter-spacing:1px}.ct{padding:12px}.ct b{font-size:13px}.ct small{display:block;color:#68717d;font-size:10px;margin-top:6px}
+footer{display:flex;justify-content:space-between;gap:20px;border-top:1px solid var(--line);margin-top:60px;padding:24px 0;color:#646c77;font-size:11px}
+@media(max-width:800px){main{padding:16px}.pill{display:none}.hero{padding:65px 0 45px}.hero h1{letter-spacing:-2.4px}.inputrow{flex-direction:column}.btn{height:50px}.features{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}footer{flex-direction:column}}
+</style>
+</head>
+<body>
+<main>
+<header><div class="logo">suleimanzlatyn<small>AI CLIP STUDIO</small></div><span class="pill">PRIVATE • PERSONAL USE</span></header>
+
+<section class="hero">
+<div class="eyebrow">AI SHORT-FORM INTELLIGENCE</div>
+<h1>Turn long videos into<br><em>high-retention clips.</em></h1>
+<p>Pick an authorized source. The studio transcribes it, finds the strongest moments and renders up to 50 vertical clips with captions.</p>
+
+<div class="ingest">
+<div class="modebar">
+<button class="mode active" id="ytMode" type="button">YouTube URL</button>
+<button class="mode" id="fileMode" type="button">Upload video</button>
+</div>
+
+<div id="ytBox" class="inputrow">
+<input id="url" type="text" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
+<button class="btn" id="go" type="button">Find best clips ↗</button>
+</div>
+
+<div id="fileBox" class="drop">
+<input id="file" type="file" accept="video/*">
+<label for="file">Choose a video file</label>
+<div class="fileinfo" id="fileInfo">MP4, WebM, MOV and other browser-supported video files • max 900 MB</div>
+<div class="uploadmeter" id="uploadMeter"><span id="uploadBar"></span></div>
+</div>
+</div>
+
+<small class="note"><b>Free-safe fallback:</b> when YouTube blocks an automated server request, download your own/authorized source and upload it here. <a class="secure" href="/cookie-helper.html">Secure YouTube setup ↗</a></small>
+</section>
+
+<section class="features">
+<div class="feature"><b>01 • Hook-first scoring</b><span>Curiosity, tension, emotion, surprise, payoff and quotability.</span></div>
+<div class="feature"><b>02 • Context-aware selection</b><span>Rejects greetings, filler, repetition and weak setup.</span></div>
+<div class="feature"><b>03 • Shorts-ready render</b><span>9:16 framing, captions and downloadable MP4 output.</span></div>
+</section>
+
+<div id="msg"></div>
+
+<section id="results" class="results" style="display:none">
+<div class="head"><div><div class="eyebrow" id="state">PROCESSING</div><h2 id="title">Building your clip vault</h2></div><div class="count"><span id="pct">0</span>%</div></div>
+<div class="progress"><span id="bar"></span></div>
+<p id="status" class="status"></p>
+<div id="grid" class="grid"></div>
+</section>
+
+<footer><div class="logo">suleimanzlatyn<small>AI CLIP STUDIO</small></div><span>Private workflow • authorized content only</span></footer>
+</main>
+
+<script type="module">
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+const err=t=>{$('msg').innerHTML='<div class="error">'+esc(t)+'</div>'};
+const ok=t=>{$('msg').innerHTML='<div class="success">'+esc(t)+'</div>'};
+
+async function startJob(payload){
+  const r=await fetch('/api/analyze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+  const raw=await r.text(); let d={};
+  try{d=raw?JSON.parse(raw):{}}catch{d={error:raw||'The server returned an invalid response.'}}
+  if(!r.ok)throw Error(d.error||'Could not start job');
+  if(!d.jobId)throw Error('The server did not return a job ID.');
+  poll(d.jobId);
+}
+
+async function poll(id){
+  try{
+    const d=await(await fetch('/api/jobs/'+id,{cache:'no-store'})).json();
+    $('results').style.display='block';
+    $('pct').textContent=d.progress||0;
+    $('bar').style.width=(d.progress||0)+'%';
+    $('status').textContent=d.message||'';
+    if(d.status==='done'){
+      $('state').textContent='COMPLETE';$('title').textContent='Your clip vault';
+      $('grid').innerHTML=(d.clips||[]).map(c=>'<a class="clip" href="'+c.url+'" download><div class="thumb"><strong>#'+String(c.rank).padStart(2,'0')+'</strong><span>DOWNLOAD</span></div><div class="ct"><b>'+esc(c.title)+'</b><small>'+c.duration+'s • Score '+c.score+'</small></div></a>').join('');
+      return;
+    }
+    if(d.status==='error'){err(d.error||'Processing failed');return}
+    setTimeout(()=>poll(id),2500);
+  }catch(e){setTimeout(()=>poll(id),4000)}
+}
+
+$('ytMode').onclick=()=>{$('ytMode').classList.add('active');$('fileMode').classList.remove('active');$('ytBox').style.display='flex';$('fileBox').classList.remove('show')};
+$('fileMode').onclick=()=>{$('fileMode').classList.add('active');$('ytMode').classList.remove('active');$('ytBox').style.display='none';$('fileBox').classList.add('show')};
+
+$('go').onclick=async()=>{
+  const v=$('url').value.trim();
+  $('msg').innerHTML='';
+  if(!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(v))return err('Paste a valid YouTube URL.');
+  $('go').disabled=true;$('go').textContent='Starting…';
+  try{await startJob({url:v})}catch(e){err(e.message||'Could not start job')}finally{$('go').disabled=false;$('go').textContent='Find best clips ↗'}
+};
+
+$('file').onchange=async()=>{
+  const file=$('file').files?.[0];
+  if(!file)return;
+  $('msg').innerHTML='';
+  const max=900*1024*1024;
+  if(file.size>max)return err('This upload is larger than the 900 MB limit.');
+  if(!file.type.startsWith('video/'))return err('Choose a video file.');
+  $('fileInfo').textContent='Selected: '+file.name+' • '+(file.size/1024/1024).toFixed(1)+' MB';
+  $('uploadMeter').classList.add('show');$('uploadBar').style.width='0%';
+  try{
+    const {upload}=await import('https://esm.sh/@vercel/blob@2.8.1/client?bundle');
+    const safeName=file.name.replace(/[^a-zA-Z0-9._-]+/g,'-').slice(-120);
+    const blob=await upload('sources/'+crypto.randomUUID()+'-'+safeName,file,{
+      access:'public',
+      handleUploadUrl:'/api/upload',
+      multipart:true,
+      contentType:file.type||'video/mp4',
+      onUploadProgress(p){$('uploadBar').style.width=Math.round(p.percentage||0)+'%';}
+    });
+    ok('Upload complete. Starting AI analysis…');
+    await startJob({sourceUrl:blob.url});
+  }catch(e){
+    err(e.message||'Upload failed. Make sure Vercel Blob is connected to this project.');
+  }finally{
+    setTimeout(()=>{$('uploadMeter').classList.remove('show');$('uploadBar').style.width='0%'},1200);
+  }
+};
+</script>
+</body>
+</html>
