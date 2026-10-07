@@ -194,7 +194,7 @@ async function main() {
     await st(16, 'Extracting audio for AI analysis…');
     await cmd('ffmpeg', ['-y','-i',sourcePath,'-vn','-ac','1','-ar','16000','-c:a','libmp3lame','-b:a','96k',out+'/audio.mp3']);
 
-    await st(18, 'Transcribing with OpenAI…');
+    await st(18, 'Transcribing with automatic provider failover…');
     const segs = await transcribeInChunks(out + '/audio.mp3');
     await writeFile(out + '/transcript.json', JSON.stringify(segs));
 
