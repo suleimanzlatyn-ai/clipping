@@ -362,10 +362,17 @@ module.exports = async (req, res) => {
     if (typeof url !== 'string' || !/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
       return res.status(400).json({ error: 'Use a valid YouTube URL.' });
     }
-    const hasGateway = !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
+    let gatewayAuth = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || '';
+    if (!process.env.AI_GATEWAY_API_KEY) {
+      try {
+        const { getVercelOidcToken } = await import('@vercel/oidc');
+        gatewayAuth = await getVercelOidcToken({ expirationBufferMs: 5 * 60 * 1000 }) || gatewayAuth;
+      } catch {}
+    }
+    const hasGateway = !!gatewayAuth;
     const hasDirect = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
-    if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'This Vercel deployment has no AI Gateway authentication. Enable Vercel OIDC for the project, or add an AI Gateway API key.' });
+    if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'This Vercel deployment could not obtain an AI Gateway credential. Vercel OIDC is required for the no-key setup, or an AI Gateway API key can be configured.' });
 
     const id = crypto.randomUUID();
     const { Sandbox } = await import('@vercel/sandbox');
@@ -394,7 +401,7 @@ module.exports = async (req, res) => {
       cmd: 'node',
       args: [workerPath],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
