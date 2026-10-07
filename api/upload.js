@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { Sandbox } = require('@vercel/sandbox');
+const { Sandbox } = process.env.RENDER === '1' ? require('../lib/local-sandbox') : require('@vercel/sandbox');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -18,6 +18,31 @@ module.exports = async (req, res) => {
 
     const id = crypto.randomUUID();
     const token = crypto.randomBytes(32).toString('hex');
+    if (process.env.RENDER === '1') {
+      const sb = await Sandbox.create({ name: 'clip-job-' + id });
+      await sb.writeFiles([{
+        path: '/workspace/jobs/' + id + '/job.json',
+        content: Buffer.from(JSON.stringify({
+          id,
+          status: 'waiting_upload',
+          progress: 1,
+          message: 'Waiting for your video upload…',
+          clips: [],
+          uploadToken: token,
+          expectedBytes: Math.round(fileSize)
+        }))
+      }]);
+      const base = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+      return res.status(200).json({
+        jobId: id,
+        uploadUrl: base + '/api/upload-file/' + id,
+        uploadToken: token,
+        fileName,
+        fileType,
+        fileSize
+      });
+    }
+
     // A persistent sandbox is required because the upload and the later
     // analysis request are separate HTTP requests. Expose the upload port
     // before starting the server inside the sandbox.
@@ -37,7 +62,9 @@ module.exports = async (req, res) => {
         status: 'waiting_upload',
         progress: 1,
         message: 'Waiting for your video upload…',
-        clips: []
+        clips: [],
+        uploadToken: token,
+        expectedBytes: Math.round(fileSize)
       }))
     }]);
 
