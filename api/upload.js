@@ -27,7 +27,7 @@ module.exports = async (req, res) => {
     if (process.env.RENDER === '1') {
       const sb = await Sandbox.create({ name: 'clip-job-' + id });
       await sb.writeFiles([{
-        path: '/workspace/jobs/' + id + '/job.json',
+        path: '/vercel/sandbox/jobs/' + id + '/job.json',
         content: Buffer.from(JSON.stringify({
           id,
           status: 'waiting_upload',
@@ -62,7 +62,7 @@ module.exports = async (req, res) => {
 
     stage = 'initializing job state';
     await sb.writeFiles([{
-      path: '/workspace/jobs/' + id + '/job.json',
+      path: '/vercel/sandbox/jobs/' + id + '/job.json',
       content: Buffer.from(JSON.stringify({
         id,
         status: 'waiting_upload',
@@ -76,18 +76,18 @@ module.exports = async (req, res) => {
 
     stage = 'installing upload server';
     await sb.writeFiles([{
-      path: '/workspace/upload-server-' + id + '.js',
+      path: '/vercel/sandbox/upload-server-' + id + '.js',
       content: Buffer.from("const http = require('node:http');\nconst fs = require('node:fs');\nconst path = require('node:path');\nconst token = process.env.UPLOAD_TOKEN || '';\nconst target = process.env.UPLOAD_TARGET || '';\nconst expected = Number(process.env.EXPECTED_BYTES || 0);\nconst maxBytes = 900 * 1024 * 1024;\nfunction cors(res) { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'PUT, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'content-type, x-upload-token'); res.setHeader('Access-Control-Max-Age', '600'); }\nconst server = http.createServer((req, res) => { cors(res); if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); } if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true })); } if (req.method !== 'PUT' || req.url !== '/upload') { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Not found' })); } if (req.headers['x-upload-token'] !== token) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Unauthorized upload.' })); } const length = Number(req.headers['content-length'] || 0); if (!Number.isFinite(length) || length <= 0 || length > maxBytes) { res.writeHead(413, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Upload is larger than 900 MB or has no content length.' })); } if (expected > 0 && length !== expected) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Uploaded size does not match the selected file.' })); } fs.mkdirSync(path.dirname(target), { recursive: true }); const temp = target + '.part'; try { fs.unlinkSync(temp); } catch {} const file = fs.createWriteStream(temp, { mode: 0o600 }); let received = 0; let failed = false; req.on('data', chunk => { received += chunk.length; if (received > maxBytes && !failed) { failed = true; try { file.destroy(); } catch {} try { req.destroy(); } catch {} } }); req.on('aborted', () => { failed = true; try { file.destroy(); } catch {} try { fs.unlinkSync(temp); } catch {} }); file.on('error', () => { if (!failed) { failed = true; try { req.destroy(); } catch {} } }); file.on('finish', () => { if (failed) return; try { const size = fs.statSync(temp).size; if (size !== length || (expected > 0 && size !== expected)) throw new Error('Uploaded file size mismatch.'); fs.renameSync(temp, target); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, size })); setTimeout(() => server.close(() => process.exit(0)), 500); } catch (error) { try { fs.unlinkSync(temp); } catch {} if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: error.message || 'Could not save upload.' })); } }); req.pipe(file); });\nserver.listen(8788, '0.0.0.0');")
     }]);
 
     stage = 'starting upload server';
     const launch = await sb.runCommand({
       cmd: 'node',
-      args: ['/workspace/upload-server-' + id + '.js'],
+      args: ['/vercel/sandbox/upload-server-' + id + '.js'],
       detached: true,
       env: {
         UPLOAD_TOKEN: token,
-        UPLOAD_TARGET: '/workspace/output/' + id + '/source.mp4',
+        UPLOAD_TARGET: '/vercel/sandbox/output/' + id + '/source.mp4',
         EXPECTED_BYTES: String(Math.round(fileSize))
       }
     });
