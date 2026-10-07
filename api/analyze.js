@@ -373,4 +373,7 @@ module.exports = async (req, res) => {
     return res.json({ jobId: id, status: 'queued' });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Could not start worker' });
-  }\n};\n\nmodule.exports.maxDuration = 60;
+  }
+};
+
+module.exports.maxDuration = 60;
