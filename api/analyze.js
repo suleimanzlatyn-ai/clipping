@@ -548,8 +548,8 @@ module.exports = async (req, res) => {
     const { url: rawUrl, sourceUrl: rawSourceUrl } = req.body || {};
     const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
     const sourceUrl = typeof rawSourceUrl === 'string' ? rawSourceUrl.trim() : '';
-    const validYouTube = /^https?:\/\/(www\\.)?(youtube\\.com|youtu\\.be)\//i.test(url);
-    const validBlob = /^https:\/\/[a-z0-9-]+\\.public\\.blob\\.vercel-storage\\.com\//i.test(sourceUrl);
+    const validYouTube = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
+    const validBlob = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//i.test(sourceUrl);
     if ((!validYouTube && !validBlob) || (validYouTube && sourceUrl)) {
       return res.status(400).json({ error: 'Provide either a valid YouTube URL or an uploaded video source.' });
     }
