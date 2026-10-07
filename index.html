@@ -102,7 +102,7 @@ $('file').onchange=async()=>{
   $('fileInfo').textContent='Selected: '+file.name+' • '+(file.size/1024/1024).toFixed(1)+' MB';$('uploadMeter').classList.add('show');$('uploadBar').style.width='0%';
   try{
     const p=await fetch('/api/upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({fileName:file.name,fileType:file.type||'video/mp4',fileSize:file.size})});
-    const prep=await p.json().catch(()=>({}));if(!p.ok)throw Error(prep.error||'Could not prepare the upload.');
+    const prep=await p.json().catch(()=>({}));if(!p.ok){const detail=[prep.stage,prep.details].filter(Boolean).join(': ');throw Error((prep.error||'Could not prepare the upload.')+(detail?' — '+detail:''));}
     await uploadDirect(prep.uploadUrl,prep.uploadToken,file);$('uploadBar').style.width='100%';ok('Upload complete. Starting AI analysis…');await startJob({jobId:prep.jobId,uploaded:true});
   }catch(e){err(e.message||'Upload failed. Please try the video again.')}
   finally{setTimeout(()=>{$('uploadMeter').classList.remove('show');$('uploadBar').style.width='0%'},1200)}
