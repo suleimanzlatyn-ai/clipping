@@ -1,4 +1,3 @@
-const { Sandbox } = require('@vercel/sandbox');
 const crypto = require('crypto');
 
 const WORKER = String.raw\`const { execFile } = require('node:child_process');
@@ -335,6 +334,7 @@ module.exports = async (req, res) => {
     if (!hasFree && !paid) return res.status(500).json({ error: 'No AI provider is connected. Add GROQ_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.' });
 
     const id = crypto.randomUUID();
+    const { Sandbox } = await import('@vercel/sandbox');
     const sb = await Sandbox.create({
       name: 'clip-job-' + id,
       runtime: 'node24',
