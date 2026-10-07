@@ -57,3 +57,15 @@ The downloader does not attempt to bypass YouTube bot verification, CAPTCHA, or 
 - Sandbox storage is temporary. A persistent storage layer should be added before treating this as a production multi-user service.
 - Some YouTube authentication can depend on the originating session/network, so a cloud worker may still be unable to fetch certain videos even with valid cookies. A direct authorized video upload is the most reliable fallback.
 - Use only videos you own or are authorized to download/edit, and comply with the source platform's terms.
+
+## YouTube bot-verification fallback
+
+The app now has two supported source paths:
+
+1. Authorized YouTube URL: uses the YouTube downloader with Deno/EJS and optional authorized cookies. It does not bypass CAPTCHA or bot verification.
+2. Direct video upload: when YouTube rejects the server, the browser uploads the source directly to Vercel Blob and the worker processes the uploaded file.
+
+For direct uploads, create a Vercel Blob store connected to this project. Vercel documents client uploads for files larger than the 4.5 MB Vercel Function request limit, and the Hobby plan includes 1 GB Blob storage plus included operations/data transfer within its limits.
+
+The direct-upload path accepts video files up to 900 MB and deletes the temporary Blob source after processing.
+
