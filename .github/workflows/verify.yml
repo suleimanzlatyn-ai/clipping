@@ -16,9 +16,11 @@ jobs:
       - name: Parse API routes
         run: |
           node -e "const fs=require('fs'); new Function(fs.readFileSync('api/analyze.js','utf8')); new Function(fs.readFileSync('api/jobs/[id].js','utf8')); console.log('API syntax OK')"
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
       - name: Load API routes
         run: |
-          node -e "const a=require('./api/analyze.js'); if(typeof a!=='function') throw new Error('analyze handler missing'); const j=require('./api/jobs/[id].js'); if(typeof j!=='function') throw new Error('job handler missing'); console.log('API modules load OK')"
+          node -e "const a=require('./api/analyze.js'); if(typeof a!=='function') throw new Error('analyze handler missing'); const j=require('./api/jobs/[id].js'); if(typeof j!=='function') throw new Error('job handler missing'); import('ai').then(()=>console.log('AI SDK import OK'))"
       - name: Validate package
         run: |
-          node -e "const p=require('./package.json'); for(const x of ['@google/genai','@vercel/sandbox','openai']) if(!p.dependencies[x]) throw new Error('Missing '+x); console.log('package OK')"
+          node -e "const p=require('./package.json'); for(const x of ['ai','@google/genai','@vercel/sandbox','openai']) if(!p.dependencies[x]) throw new Error('Missing '+x); console.log('package OK')"
