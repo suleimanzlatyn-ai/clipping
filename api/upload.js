@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
       request: req,
       onBeforeGenerateToken: async (pathname) => {
         const cleanName = String(pathname || '').toLowerCase();
-        if (!/^sources\\//.test(cleanName)) {
+        if (!cleanName.startsWith('sources/')) {
           throw new Error('Invalid upload path.');
         }
 
@@ -52,7 +52,7 @@ module.exports = async (req, res) => {
     return res.status(200).json(jsonResponse);
   } catch (error) {
     return res.status(400).json({
-      error: error?.message || 'Could not prepare the upload.'
+      error: (error && error.message) || 'Could not prepare the upload.'
     });
   }
 };
