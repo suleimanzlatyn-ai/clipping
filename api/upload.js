@@ -8,6 +8,12 @@ module.exports = async (req, res) => {
   }
 
   try {
+    // Vercel Functions receive the OIDC credential on the request header at runtime.
+    // Older Sandbox SDK versions only inspect the environment, so bridge it explicitly.
+    if (!process.env.VERCEL_OIDC_TOKEN && req.headers) {
+      const oidc = req.headers['x-vercel-oidc-token'];
+      if (oidc) process.env.VERCEL_OIDC_TOKEN = Array.isArray(oidc) ? oidc[0] : oidc;
+    }
     const body = req.body || {};
     const fileName = String(body.fileName || 'video.mp4').slice(0, 160);
     const fileType = String(body.fileType || 'video/mp4').slice(0, 120);
