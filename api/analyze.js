@@ -621,7 +621,7 @@ TRANSCRIPT:
       }
     }
 
-    await Promise.all(Array.from({ length: Math.min(4, finalPicks.length) }, () => worker()));
+    await Promise.all(Array.from({ length: Math.min(Number(process.env.CLIP_RENDER_WORKERS || 4), finalPicks.length) }, () => worker()));
     try { await unlink(sourcePath); } catch {}
     try { await unlink(out + '/audio.mp3'); } catch {}
     try { await unlink(out + '/transcript.json'); } catch {}
@@ -689,7 +689,8 @@ module.exports = async (req, res) => {
           AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0',
           GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b',
           GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b',
-          GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite'
+          GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite',
+          CLIP_SMART_FALLBACK: process.env.CLIP_SMART_FALLBACK || '0'
         }
       });
       if (process.env.RENDER !== '1') await sb.runCommand({ cmd: 'python3', args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'], detached: true, env: {} });
@@ -723,10 +724,10 @@ module.exports = async (req, res) => {
       cmd: 'sh',
       args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', CLIP_SMART_FALLBACK: process.env.CLIP_SMART_FALLBACK || '0' }
     });
 
-    await sb.runCommand({
+    if (process.env.RENDER !== '1') await sb.runCommand({
       cmd: 'python3',
       args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'],
       detached: true,
