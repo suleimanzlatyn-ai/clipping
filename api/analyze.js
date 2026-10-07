@@ -353,7 +353,7 @@ exports.default = async (req, res) => {
       }))
     }]);
 
-    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url));
+    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replaceAll('\\${', '${').replaceAll('\\`', '`');
     const workerPath = '/workspace/run-' + id + '.mjs';
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
