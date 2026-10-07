@@ -6,6 +6,6 @@
     "@vercel/sandbox": "3.5.1",
     "openai": "latest",
     "ai": "7.0.122",
-    "@vercel/oidc": "4.0.0"
+    "@vercel/oidc": "4.0.1"
   }
 }
