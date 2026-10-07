@@ -22,7 +22,8 @@ let estimatedPaidUsd = 0;
 
 function providerReady(p) {
   if ((disabledUntil.get(p) || 0) > Date.now()) return false;
-  if (p === 'gateway') return !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);\n  if (p === 'groq') return !!process.env.GROQ_API_KEY;
+  if (p === 'gateway') return !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
+  if (p === 'groq') return !!process.env.GROQ_API_KEY;
   if (p === 'gemini') return !!process.env.GEMINI_API_KEY;
   return paidAllowed && !!process.env.OPENAI_API_KEY && estimatedPaidUsd < paidMaxUsd;
 }
