@@ -18,7 +18,7 @@ header{display:flex;justify-content:space-between;align-items:center}.logo{font-
 .note{display:block;color:#6f7782;font-size:11px;margin-top:11px}.note b{color:#9ba4af}.secure{color:var(--lime);text-decoration:none}
 .features{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:24px}.feature{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px}.feature b{display:block;font-size:13px}.feature span{display:block;color:#78808b;font-size:12px;margin-top:7px}
 #msg{max-width:820px;margin:22px auto}.error,.success{padding:14px;border-radius:12px}.error{background:#241318;border:1px solid #552730;color:#ff9da8}.success{background:#121a0d;border:1px solid #364427;color:#c9ec94}
-.results{border-top:1px solid var(--line);margin-top:68px;padding-top:44px}.head{display:flex;justify-content:space-between;gap:20px;align-items:end}.count{font-size:40px;color:var(--lime);font-weight:900}.progress{height:5px;background:#1a1d21;margin:22px 0 10px;border-radius:99px;overflow:hidden}.progress span{display:block;height:100%;width:0;background:var(--lime);transition:width .3s}.status{color:#858d98;font-size:12px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:24px}.clip{background:#0e1014;border:1px solid var(--line);border-radius:15px;overflow:hidden;color:#fff;text-decoration:none}.thumb{aspect-ratio:9/12;background:linear-gradient(145deg,#1a2111,#08090b);display:flex;align-items:flex-end;justify-content:space-between;padding:12px}.thumb strong{color:var(--lime);font-size:21px}.thumb span{font-size:8px;letter-spacing:1px}.ct{padding:12px}.ct b{font-size:13px}.ct small{display:block;color:#68717d;font-size:10px;margin-top:6px}
+.results{border-top:1px solid var(--line);margin-top:68px;padding-top:44px}.head{display:flex;justify-content:space-between;gap:20px;align-items:end}.count{font-size:40px;color:var(--lime);font-weight:900}.progress{height:5px;background:#1a1d21;margin:22px 0 10px;border-radius:99px;overflow:hidden}.progress span{display:block;height:100%;width:0;background:var(--lime);transition:width .3s}.status{color:#858d98;font-size:12px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:24px}.clip{background:#0e1014;border:1px solid var(--line);border-radius:15px;overflow:hidden;color:#fff;text-decoration:none;transition:transform .18s,border-color .18s,box-shadow .18s}.clip:hover{transform:translateY(-3px);border-color:#3b4730;box-shadow:0 16px 35px rgba(0,0,0,.24)}.thumb{aspect-ratio:9/12;background:linear-gradient(145deg,#1a2111,#08090b);position:relative;overflow:hidden}.thumb video{width:100%;height:100%;object-fit:cover;display:block}.thumb:after{content:"";position:absolute;inset:auto 0 0;height:35%;background:linear-gradient(transparent,rgba(0,0,0,.75));pointer-events:none}.rank{position:absolute;z-index:2;left:10px;bottom:10px;color:var(--lime);font-size:21px;font-weight:900}.download{position:absolute;z-index:2;right:10px;bottom:11px;font-size:8px;letter-spacing:1px;font-weight:800}.ct{padding:12px}.ct b{font-size:13px}.ct small{display:block;color:#68717d;font-size:10px;margin-top:6px}
 footer{display:flex;justify-content:space-between;gap:20px;border-top:1px solid var(--line);margin-top:60px;padding:24px 0;color:#646c77;font-size:11px}
 @media(max-width:800px){main{padding:16px}.pill{display:none}.hero{padding:65px 0 45px}.hero h1{letter-spacing:-2.4px}.inputrow{flex-direction:column}.btn{height:50px}.features{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}footer{flex-direction:column}}
 </style>
@@ -40,7 +40,7 @@ footer{display:flex;justify-content:space-between;gap:20px;border-top:1px solid 
 </div>
 </div>
 
-<small class="note"><b>Upload-only workflow:</b> your video is uploaded directly to the processing workspace, then analyzed and rendered into short-form clips. Authorized content only.</small>
+<small class="note"><b>Upload-only workflow:</b> your video is uploaded directly to the processing workspace, then analyzed and rendered into short-form clips. Keep this page open while processing. Authorized content only.</small>
 </section>
 
 <section class="features">
@@ -79,7 +79,8 @@ async function poll(id){
     $('results').style.display='block';$('pct').textContent=d.progress||0;$('bar').style.width=(d.progress||0)+'%';$('status').textContent=d.message||'';
     if(d.status==='done'){
       $('state').textContent='COMPLETE';$('title').textContent='Your clip vault';
-      $('grid').innerHTML=(d.clips||[]).map(c=>'<a class="clip" href="'+c.url+'" download><div class="thumb"><strong>#'+String(c.rank).padStart(2,'0')+'</strong><span>DOWNLOAD</span></div><div class="ct"><b>'+esc(c.title)+'</b><small>'+c.duration+'s • Score '+c.score+'</small></div></a>').join('');return;
+      $('status').textContent=(d.clips||[]).length+' clips are ready. Tap any clip to preview or download.';
+      $('grid').innerHTML=(d.clips||[]).map(c=>'<a class="clip" href="'+c.url+'" download><div class="thumb"><video src="'+c.url+'" muted playsinline preload="metadata"></video><strong class="rank">#'+String(c.rank).padStart(2,'0')+'</strong><span class="download">DOWNLOAD</span></div><div class="ct"><b>'+esc(c.title)+'</b><small>'+c.duration+'s • Score '+c.score+'</small></div></a>').join('');return;
     }
     if(d.status==='error'){err(d.error||'Processing failed');return}
     setTimeout(()=>poll(id),2500);
