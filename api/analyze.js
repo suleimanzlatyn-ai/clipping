@@ -561,13 +561,16 @@ main();`;
 
 module.exports = async (req, res) => {
   try {
-    const { url: rawUrl, sourceUrl: rawSourceUrl } = req.body || {};
+    const body = req.body || {};
+    const rawUrl = body.url;
+    const rawJobId = body.jobId;
+    const uploaded = body.uploaded === true;
     const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
-    const sourceUrl = typeof rawSourceUrl === 'string' ? rawSourceUrl.trim() : '';
+    const jobId = typeof rawJobId === 'string' ? rawJobId.trim() : '';
     const validYouTube = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
-    const validBlob = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//i.test(sourceUrl);
-    if ((!validYouTube && !validBlob) || (validYouTube && sourceUrl)) {
-      return res.status(400).json({ error: 'Provide either a valid YouTube URL or an uploaded video source.' });
+    const validJobId = /^[a-f0-9-]{20,}$/i.test(jobId);
+    if ((!validYouTube && !uploaded) || (validYouTube && uploaded) || (uploaded && !validJobId)) {
+      return res.status(400).json({ error: 'Provide a valid YouTube URL or upload a video first.' });
     }
     let gatewayAuth = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || '';
     if (!process.env.AI_GATEWAY_API_KEY) {
@@ -580,6 +583,36 @@ module.exports = async (req, res) => {
     const hasDirect = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
     if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'No AI provider is configured. Enable Vercel AI Gateway/OIDC or configure Groq/Gemini.' });
+
+    if (uploaded) {
+      const { Sandbox } = await import('@vercel/sandbox');
+      const sb = await Sandbox.get({ name: 'clip-job-' + jobId });
+      try {
+        await sb.runCommand({ cmd: 'sh', args: ['-lc', 'test -s ' + JSON.stringify('/workspace/output/' + jobId + '/source.mp4')] });
+      } catch {
+        return res.status(409).json({ error: 'The upload has not finished yet.' });
+      }
+      const script = WORKER.replaceAll('__JOB_ID__', jobId).replace('__URL__', JSON.stringify('')).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('/workspace/output/' + jobId + '/source.mp4')).replaceAll('\\${', '${').replaceAll('\\`', '`');
+      const workerPath = '/workspace/run-' + jobId + '.mjs';
+      await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
+      await sb.runCommand({
+        cmd: 'sh',
+        args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + jobId + '/worker.log') + ' 2>&1'],
+        detached: true,
+        env: {
+          AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '',
+          GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+          OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything',
+          YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '',
+          AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0',
+          GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b',
+          GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b',
+          GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite'
+        }
+      });
+      await sb.runCommand({ cmd: 'python3', args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'], detached: true, env: {} });
+      return res.json({ jobId, status: 'queued' });
+    }
 
     const id = crypto.randomUUID();
     const { Sandbox } = await import('@vercel/sandbox');
@@ -600,7 +633,7 @@ module.exports = async (req, res) => {
       }))
     }]);
 
-    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replace('__SOURCE_URL__', JSON.stringify(sourceUrl)).replaceAll('\\${', '${').replaceAll('\\`', '`');
+    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('')).replaceAll('\\${', '${').replaceAll('\\`', '`');
     const workerPath = '/workspace/run-' + id + '.mjs';
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
@@ -608,7 +641,7 @@ module.exports = async (req, res) => {
       cmd: 'sh',
       args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
