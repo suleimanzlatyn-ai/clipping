@@ -91,7 +91,7 @@ async function geminiTranscribe(file, offset) {
 async function gatewayTranscribe(file, offset) {
   const { experimental_transcribe } = await import('ai');
   const result = await experimental_transcribe({
-    model: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1',
+    model: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe',
     audio: await readFile(file),
     providerOptions: { openai: { timestampGranularities: ['segment'] } },
     maxRetries: 2
@@ -166,8 +166,29 @@ async function ensureTools() {
     await cmd('sudo', ['apt-get', 'update', '-qq']);
     await cmd('sudo', ['apt-get', 'install', '-y', 'ffmpeg']);
   }
+  // yt-dlp now requires an external JavaScript runtime for full YouTube support.
+  // Install Deno + yt-dlp's EJS companion in the sandbox instead of relying on
+  // whatever minimal runtime happens to be present in the base image.
+  const denoPath = '/usr/local/bin/deno';
+  try { await cmd(denoPath, ['--version']); }
+  catch {
+    await cmd('sh', ['-lc',
+      'set -eu; ' +
+      'tmp=$(mktemp -d); ' +
+      'curl -fsSL --retry 3 --retry-delay 1 https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o "$tmp/deno.zip"; ' +
+      'unzip -oq "$tmp/deno.zip" -d "$tmp"; ' +
+      'install -m 0755 "$tmp/deno" "' + denoPath + '"; ' +
+      'rm -rf "$tmp"'
+    ]);
+  }
   try { await cmd('yt-dlp', ['--version']); }
-  catch { await cmd('python3', ['-m', 'pip', 'install', '-q', 'yt-dlp']); }
+  catch {
+    await cmd('python3', ['-m', 'pip', 'install', '-q', '--break-system-packages', '-U', 'yt-dlp[default]']);
+  }
+  // Keep yt-dlp's EJS scripts current as well. If the base image already ships
+  // an official yt-dlp binary, this is harmless and simply refreshes the Python
+  // installation used by the worker.
+  await cmd('python3', ['-m', 'pip', 'install', '-q', '--break-system-packages', '-U', 'yt-dlp-ejs']);
 }
 
 function srtTime(sec) {
@@ -214,13 +235,35 @@ async function main() {
     await ensureTools();
 
     await st(9, 'Fetching the authorized source video…');
-    await cmd('yt-dlp', [
-      '--no-playlist',
-      '-f', 'bv*[height<=1080]+ba/b[height<=1080]',
-      '--merge-output-format', 'mp4',
-      '-o', out + '/source.%(ext)s',
-      url
-    ]);
+    try {
+      await cmd('yt-dlp', [
+        '--no-playlist',
+        '--js-runtimes', 'deno',
+        '--remote-components', 'ejs:npm',
+        '--retries', '3',
+        '--fragment-retries', '3',
+        '--extractor-retries', '3',
+        '--socket-timeout', '20',
+        '--concurrent-fragments', '4',
+        '-f', 'bv*[height<=1080]+ba/b[height<=1080]',
+        '--merge-output-format', 'mp4',
+        '-o', out + '/source.%(ext)s',
+        url
+      ]);
+    } catch (e) {
+      const raw = String(e?.stderr || e?.message || e || '');
+      if (/sign in to confirm|not a bot|confirm you.?re not a bot|cookies-from-browser|cookies/i.test(raw)) {
+        throw new Error(
+          'YouTube rejected this server request with bot verification. ' +
+          'Deno/EJS is installed, but YouTube still requires an authenticated request for this video. ' +
+          'Use a video you own or are authorized to process and provide an authorized source/cookie configuration rather than bypassing YouTube verification.'
+        );
+      }
+      if (/javascript runtime|js runtime|EJS|no supported JavaScript/i.test(raw)) {
+        throw new Error('YouTube extraction still cannot initialize its JavaScript runtime. Deno and yt-dlp-ejs installation failed or are unavailable in the worker.');
+      }
+      throw new Error('Video download failed: ' + raw.slice(-1800));
+    }
     const source = (await readdir(out)).find(x => /^source\\./.test(x) && x.endsWith('.mp4'));
     if (!source) throw new Error('The source video could not be downloaded.');
     const sourcePath = out + '/' + source;
@@ -362,7 +405,8 @@ TRANSCRIPT:
       clips: done
     }));
   } catch (e) {
-    await st(100, 'Processing failed', 'error', { error: e?.stderr || e?.message || String(e) });
+    const message = String(e?.message || e || 'Unknown processing error').slice(0, 2200);
+    await st(100, 'Processing failed', 'error', { error: message });
   }
 }
 main();`;
@@ -412,7 +456,7 @@ module.exports = async (req, res) => {
       cmd: 'sh',
       args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
