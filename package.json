@@ -3,8 +3,7 @@
   "private": true,
   "dependencies": {
     "@google/genai": "latest",
-    "@vercel/oidc": "latest",
-    "@vercel/sandbox": "latest",
+    "@vercel/sandbox": "3.5.1",
     "openai": "latest"
   }
 }
