@@ -202,7 +202,7 @@ async function main() {
       const windowSegs = segs.filter(s => s.end > windowStart && s.start < windowStart + 600);
       if (!windowSegs.length) continue;
       const transcript = windowSegs.map((s, i) => i + '|' + s.start.toFixed(2) + '-' + s.end.toFixed(2) + '|' + s.text).join('\\n').slice(0, 19000);
-      const prompt = `You are the senior editor for a premium short-form clipping studio.
+      const prompt = \`You are the senior editor for a premium short-form clipping studio.
 
 Select up to 10 DISTINCT moments from this transcript that have the strongest potential as standalone short-form videos.
 
@@ -216,7 +216,7 @@ Return ONLY valid JSON:
 Use only the supplied timestamps. Score 0-100.
 
 TRANSCRIPT:
-\${transcript}`;
+\${transcript}\`;
 
       let response;
       const errors = [];
@@ -275,7 +275,7 @@ TRANSCRIPT:
     const finalPicks = picks.slice(0, 50);
     if (!finalPicks.length) throw new Error('No provider returned usable clip selections.');
 
-    await st(42, `Rendering \${finalPicks.length} selected clips…`);
+    await st(42, \`Rendering \${finalPicks.length} selected clips…\`);
     const done = [];
     let cursor = 0;
 
