@@ -30,20 +30,9 @@ footer{display:flex;justify-content:space-between;gap:20px;border-top:1px solid 
 <section class="hero">
 <div class="eyebrow">AI SHORT-FORM INTELLIGENCE</div>
 <h1>Turn long videos into<br><em>high-retention clips.</em></h1>
-<p>Pick an authorized source. The studio transcribes it, finds the strongest moments and renders up to 50 vertical clips with captions.</p>
+<p>Upload an authorized video. </p>
 
-<div class="ingest">
-<div class="modebar">
-<button class="mode active" id="ytMode" type="button">YouTube URL</button>
-<button class="mode" id="fileMode" type="button">Upload video</button>
-</div>
-
-<div id="ytBox" class="inputrow">
-<input id="url" type="text" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
-<button class="btn" id="go" type="button">Find best clips ↗</button>
-</div>
-
-<div id="fileBox" class="drop">
+<div class="ingest"><div id="fileBox" class="drop show">
 <input id="file" type="file" accept="video/*">
 <label for="file">Choose a video file</label>
 <div class="fileinfo" id="fileInfo">MP4, WebM, MOV and other browser-supported video files • max 900 MB</div>
@@ -51,7 +40,7 @@ footer{display:flex;justify-content:space-between;gap:20px;border-top:1px solid 
 </div>
 </div>
 
-<small class="note"><b>Reliable fallback:</b> when YouTube requires authentication, upload the authorized source here and the studio processes it directly. <a class="secure" href="/cookie-helper.html">Secure YouTube setup ↗</a></small>
+<small class="note"><b>Upload-only workflow:</b> your video is uploaded directly to the processing workspace, then analyzed and rendered into short-form clips. Authorized content only.</small>
 </section>
 
 <section class="features">
@@ -77,95 +66,45 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const err=t=>{$('msg').innerHTML='<div class="error">'+esc(t)+'</div>'};
 const ok=t=>{$('msg').innerHTML='<div class="success">'+esc(t)+'</div>'};
-
 async function startJob(payload){
   const r=await fetch('/api/analyze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
-  const raw=await r.text(); let d={};
-  try{d=raw?JSON.parse(raw):{}}catch{d={error:raw||'The server returned an invalid response.'}}
+  const raw=await r.text();let d={};try{d=raw?JSON.parse(raw):{}}catch{d={error:raw||'The server returned an invalid response.'}}
   if(!r.ok)throw Error(d.error||'Could not start job');
   if(!d.jobId)throw Error('The server did not return a job ID.');
   poll(d.jobId);
 }
-
 async function poll(id){
   try{
     const d=await(await fetch('/api/jobs/'+id,{cache:'no-store'})).json();
-    $('results').style.display='block';
-    $('pct').textContent=d.progress||0;
-    $('bar').style.width=(d.progress||0)+'%';
-    $('status').textContent=d.message||'';
+    $('results').style.display='block';$('pct').textContent=d.progress||0;$('bar').style.width=(d.progress||0)+'%';$('status').textContent=d.message||'';
     if(d.status==='done'){
       $('state').textContent='COMPLETE';$('title').textContent='Your clip vault';
-      $('grid').innerHTML=(d.clips||[]).map(c=>'<a class="clip" href="'+c.url+'" download><div class="thumb"><strong>#'+String(c.rank).padStart(2,'0')+'</strong><span>DOWNLOAD</span></div><div class="ct"><b>'+esc(c.title)+'</b><small>'+c.duration+'s • Score '+c.score+'</small></div></a>').join('');
-      return;
+      $('grid').innerHTML=(d.clips||[]).map(c=>'<a class="clip" href="'+c.url+'" download><div class="thumb"><strong>#'+String(c.rank).padStart(2,'0')+'</strong><span>DOWNLOAD</span></div><div class="ct"><b>'+esc(c.title)+'</b><small>'+c.duration+'s • Score '+c.score+'</small></div></a>').join('');return;
     }
     if(d.status==='error'){err(d.error||'Processing failed');return}
     setTimeout(()=>poll(id),2500);
   }catch(e){setTimeout(()=>poll(id),4000)}
 }
-
-$('ytMode').onclick=()=>{$('ytMode').classList.add('active');$('fileMode').classList.remove('active');$('ytBox').style.display='flex';$('fileBox').classList.remove('show')};
-$('fileMode').onclick=()=>{$('fileMode').classList.add('active');$('ytMode').classList.remove('active');$('ytBox').style.display='none';$('fileBox').classList.add('show')};
-
-$('go').onclick=async()=>{
-  const v=$('url').value.trim();
-  $('msg').innerHTML='';
-  if(!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(v))return err('Paste a valid YouTube URL.');
-  $('go').disabled=true;$('go').textContent='Starting…';
-  try{await startJob({url:v})}catch(e){err(e.message||'Could not start job')}finally{$('go').disabled=false;$('go').textContent='Find best clips ↗'}
-};
-
-function uploadDirect(url, token, file){
+function uploadDirect(url,token,file){
   return new Promise((resolve,reject)=>{
-    const xhr=new XMLHttpRequest();
-    xhr.open('PUT',url,true);
-    xhr.setRequestHeader('Content-Type',file.type||'application/octet-stream');
-    xhr.setRequestHeader('X-Upload-Token',token);
-    xhr.upload.onprogress=e=>{
-      if(e.lengthComputable)$('uploadBar').style.width=Math.round((e.loaded/e.total)*100)+'%';
-    };
-    xhr.onload=()=>{
-      if(xhr.status>=200&&xhr.status<300){
-        try{resolve(JSON.parse(xhr.responseText||'{}'))}catch{resolve({ok:true})}
-      }else{
-        let message='Upload failed.';
-        try{message=JSON.parse(xhr.responseText||'{}').error||message}catch{}
-        reject(Error(message));
-      }
-    };
+    const xhr=new XMLHttpRequest();xhr.open('PUT',url,true);xhr.setRequestHeader('Content-Type',file.type||'application/octet-stream');xhr.setRequestHeader('X-Upload-Token',token);
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)$('uploadBar').style.width=Math.round(e.loaded/e.total*100)+'%'};
+    xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300){try{resolve(JSON.parse(xhr.responseText||'{}'))}catch{resolve({ok:true})}}else{let m='Upload failed.';try{m=JSON.parse(xhr.responseText||'{}').error||m}catch{}reject(Error(m))}};
     xhr.onerror=()=>reject(Error('The upload connection was interrupted.'));
-    xhr.onabort=()=>reject(Error('The upload was cancelled.'));
     xhr.send(file);
   });
 }
-
 $('file').onchange=async()=>{
-  const file=$('file').files?.[0];
-  if(!file)return;
-  $('msg').innerHTML='';
-  const max=900*1024*1024;
-  if(file.size>max)return err('This upload is larger than the 900 MB limit.');
+  const file=$('file').files?.[0];if(!file)return;$('msg').innerHTML='';
+  const max=900*1024*1024;if(file.size>max)return err('This upload is larger than the 900 MB limit.');
   if(!file.type.startsWith('video/'))return err('Choose a video file.');
-  $('fileInfo').textContent='Selected: '+file.name+' • '+(file.size/1024/1024).toFixed(1)+' MB';
-  $('uploadMeter').classList.add('show');$('uploadBar').style.width='0%';
+  $('fileInfo').textContent='Selected: '+file.name+' • '+(file.size/1024/1024).toFixed(1)+' MB';$('uploadMeter').classList.add('show');$('uploadBar').style.width='0%';
   try{
-    const prepResponse=await fetch('/api/upload',{
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({fileName:file.name,fileType:file.type||'video/mp4',fileSize:file.size})
-    });
-    const prep=await prepResponse.json().catch(()=>({}));
-    if(!prepResponse.ok)throw Error(prep.error||'Could not prepare the upload.');
-    $('uploadBar').style.width='1%';
-    await uploadDirect(prep.uploadUrl,prep.uploadToken,file);
-    $('uploadBar').style.width='100%';
-    ok('Upload complete. Starting AI analysis…');
-    await startJob({jobId:prep.jobId,uploaded:true});
-  }catch(e){
-    err(e.message||'Upload failed. Please try the video again.');
-  }finally{
-    setTimeout(()=>{$('uploadMeter').classList.remove('show');$('uploadBar').style.width='0%'},1200);
-  }
+    const p=await fetch('/api/upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({fileName:file.name,fileType:file.type||'video/mp4',fileSize:file.size})});
+    const prep=await p.json().catch(()=>({}));if(!p.ok)throw Error(prep.error||'Could not prepare the upload.');
+    await uploadDirect(prep.uploadUrl,prep.uploadToken,file);$('uploadBar').style.width='100%';ok('Upload complete. Starting AI analysis…');await startJob({jobId:prep.jobId,uploaded:true});
+  }catch(e){err(e.message||'Upload failed. Please try the video again.')}
+  finally{setTimeout(()=>{$('uploadMeter').classList.remove('show');$('uploadBar').style.width='0%'},1200)}
 };
 </script>
 </body>
