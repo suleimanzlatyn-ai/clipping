@@ -50,8 +50,10 @@ module.exports = async (req, res) => {
     const sb = await Sandbox.create({
       name: 'clip-job-' + id,
       persistent: true,
+      resources: { vcpus: 1 },
       timeout: 40 * 60 * 1000,
-      ports: [8788]
+      ports: [8788],
+      networkPolicy: 'allow-all'
     });
 
     stage = 'initializing job state';
@@ -86,7 +88,9 @@ module.exports = async (req, res) => {
       }
     });
     if (launch.exitCode && launch.exitCode !== 0) {
-      throw new Error('Upload server failed to start (exit ' + launch.exitCode + ').');
+      let launchError = '';
+      try { launchError = await launch.stderr(); } catch {}
+      throw new Error('Upload server failed to start (exit ' + launch.exitCode + '). ' + launchError.trim());
     }
 
     stage = 'verifying upload server';
@@ -120,8 +124,14 @@ module.exports = async (req, res) => {
       fileSize
     });
   } catch (error) {
-    return res.status(500).json({ error: 'Could not prepare the upload.', stage, details: error.message || 'Unknown error' });
+    console.error('[clip-upload]', stage, error);
+    const details = String(error?.message || error || 'Unknown error').slice(0, 1200);
+    return res.status(500).json({
+      error: 'Could not prepare the upload.',
+      stage,
+      details
+    });
   }
 };
 
-module.exports.maxDuration = 30;
+module.exports.maxDuration = 60;
