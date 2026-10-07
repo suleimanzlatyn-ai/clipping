@@ -1,5 +1,4 @@
 const { Sandbox } = require('@vercel/sandbox');
-const { getVercelOidcToken } = require('@vercel/oidc');
 const crypto = require('crypto');
 
 const WORKER = String.raw\`const { execFile } = require('node:child_process');
@@ -335,14 +334,13 @@ module.exports = async (req, res) => {
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
     if (!hasFree && !paid) return res.status(500).json({ error: 'No AI provider is connected. Add GROQ_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.' });
 
-    const token = await getVercelOidcToken();
     const sb = await Sandbox.getOrCreate({
       name: 'suleimanzlatyn-worker',
       runtime: 'node24',
       timeout: 45 * 60 * 1000,
       resources: { vcpus: 4 },
       ports: [8787],
-      networkPolicy: 'allow-all'
+      networkPolicy: { allow: { '*': [] } }
     });
 
     const id = crypto.randomUUID();
@@ -367,7 +365,7 @@ module.exports = async (req, res) => {
     await sb.runCommand({
       cmd: 'bash',
       args: ['-lc', 'mkdir -p /workspace/output; pgrep -f "http.server 8787" >/dev/null || nohup python3 -m http.server 8787 --directory /workspace >/workspace/http.log 2>&1 &'],
-      env: { VERCEL_OIDC_TOKEN: token }
+      env: {}
     });
 
     return res.json({ jobId: id, status: 'queued' });
