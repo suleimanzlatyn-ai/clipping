@@ -198,83 +198,86 @@ async function main() {
     const segs = await transcribeInChunks(out + '/audio.mp3');
     await writeFile(out + '/transcript.json', JSON.stringify(segs));
 
-    const transcript = segs.map((s, i) =>
-      \`\${i}|\\\${s.start.toFixed(2)}-\${s.end.toFixed(2)}|\\\${s.text}\`
-    ).join('\\n');
+    const transcriptEnd = segs.length ? segs[segs.length - 1].end : 0;
+    const candidates = [];
+    for (let windowStart = 0; windowStart < transcriptEnd; windowStart += 600) {
+      const windowSegs = segs.filter(s => s.end > windowStart && s.start < windowStart + 600);
+      if (!windowSegs.length) continue;
+      const transcript = windowSegs.map((s, i) => i + '|' + s.start.toFixed(2) + '-' + s.end.toFixed(2) + '|' + s.text).join('\\n').slice(0, 26000);
+      const prompt = `You are the senior editor for a premium short-form clipping studio.
 
-    await st(38, 'AI is scoring hooks, retention and shareability with automatic provider failover…');
-    const prompt = \`You are the senior editor for a premium short-form clipping studio.
+Select up to 10 DISTINCT moments from this transcript that have the strongest potential as standalone short-form videos.
 
-Select exactly 50 DISTINCT moments from this transcript that have the strongest potential as standalone short-form videos.
+Prioritize immediate hooks, curiosity, emotional intensity, surprise, humor, conflict, memorable stories with payoff, useful insight, quotability, shareability, self-contained context, and strong beginnings/endings.
 
-Optimize for:
-1. An immediate hook in the first seconds.
-2. Curiosity or a strong unanswered question.
-3. Emotional intensity, surprise, humor, conflict, or a memorable story.
-4. A clear payoff or useful insight.
-5. Self-contained context: the viewer should understand the clip without the full video.
-6. Quotability and shareability.
-7. Strong beginning and ending; avoid clips that require missing context.
-
-Reject greetings, introductions, filler, repetition, rambling, weak setup, sponsor reads and moments whose meaning depends heavily on earlier unseen material.
-
-Target 18-65 seconds. Prefer 25-55 seconds when possible. Do not overlap clips unless they are genuinely different moments.
+Reject greetings, filler, repetition, rambling, sponsor reads, weak setup and moments that require unseen context. Target 18-65 seconds, preferably 25-55 seconds. Avoid overlaps.
 
 Return ONLY valid JSON:
-{"clips":[{"rank":1,"start":12.3,"end":48.7,"title":"short compelling title","score":96,"reason":"one short reason"}]}
+{"clips":[{"start":12.3,"end":48.7,"title":"short compelling title","score":96,"reason":"short reason"}]}
 
-Score from 0-100. Use the transcript timestamps exactly and keep start/end within the source.
+Use only the supplied timestamps. Score 0-100.
 
 TRANSCRIPT:
-\${transcript}\`;
+${transcript}`;
 
-    let r;
-    let selectedProvider = '';
-    const selectionMessages = [
-      { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
-      { role: 'user', content: prompt }
-    ];
-    const errors = [];
-    for (const provider of PROVIDERS) {
-      if (!providerReady(provider)) continue;
-      try {
-        if (provider === 'groq') {
-          r = await retryProvider('groq', () => groqClient().chat.completions.create({ model: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', messages: selectionMessages, temperature: 0.2 }));
-        } else if (provider === 'gemini') {
-          r = await retryProvider('gemini', () => geminiClient().chat.completions.create({ model: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', messages: selectionMessages, temperature: 0.2 }));
-        } else {
-          r = await retryProvider('openai', () => paidClient().chat.completions.create({ model: 'gpt-5.4-mini', messages: selectionMessages, temperature: 0.2, response_format: { type: 'json_object' } }));
-          estimatedPaidUsd += 0.02;
+      let response;
+      const errors = [];
+      for (const provider of PROVIDERS) {
+        if (!providerReady(provider)) continue;
+        try {
+          const messages = [
+            { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
+            { role: 'user', content: prompt }
+          ];
+          if (provider === 'groq') {
+            response = await retryProvider('groq', () => groqClient().chat.completions.create({ model: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', messages, temperature: 0.2 }));
+          } else if (provider === 'gemini') {
+            response = await retryProvider('gemini', () => geminiClient().chat.completions.create({ model: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', messages, temperature: 0.2 }));
+          } else {
+            response = await retryProvider('openai', () => paidClient().chat.completions.create({ model: 'gpt-5.4-mini', messages, temperature: 0.2, response_format: { type: 'json_object' } }));
+            estimatedPaidUsd += 0.02;
+          }
+          break;
+        } catch (e) {
+          errors.push(provider + ': ' + (e?.message || String(e)));
         }
-        selectedProvider = provider;
-        break;
-      } catch (e) { errors.push(provider + ': ' + (e?.message || String(e))); }
+      }
+      if (!response) throw new Error('All clip-selection providers failed for window ' + windowStart + '. ' + errors.join(' | '));
+      const parsed = parseJson(response.choices?.[0]?.message?.content || '{}');
+      for (const p of (Array.isArray(parsed.clips) ? parsed.clips : []).slice(0, 10)) {
+        const start = Number(p.start), end = Number(p.end);
+        if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+          candidates.push({
+            start: Math.max(0, start - 1.2),
+            end: Math.max(start + 12, Math.min(end + 0.8, start + 65)),
+            title: String(p.title || 'Untitled clip').slice(0, 100),
+            score: Math.max(0, Math.min(100, Math.round(Number(p.score) || 0))),
+            reason: String(p.reason || '').slice(0, 180)
+          });
+        }
+      }
+      await st(38 + Math.min(10, Math.round((windowStart / Math.max(1, transcriptEnd)) * 10)), 'AI is finding the strongest moments across the video…');
     }
-    if (!r) throw new Error('All clip-selection providers failed. ' + errors.join(' | '));
 
-
-    const parsed = parseJson(r.choices?.[0]?.message?.content || '{}');
-    const picks = (Array.isArray(parsed.clips) ? parsed.clips : [])
-      .map((p, i) => {
-        const start = Math.max(0, Number(p.start) - 1.2);
-        const end = Math.max(start + 12, Math.min(Number(p.end) + 0.8, start + 65));
-        return {
-          rank: i + 1,
-          start,
-          end,
-          title: String(p.title || 'Untitled clip').slice(0, 100),
-          score: Math.max(0, Math.min(100, Math.round(Number(p.score) || 0))),
-          reason: String(p.reason || '').slice(0, 180)
-        };
-      })
-      .filter(p => Number.isFinite(p.start) && Number.isFinite(p.end) && p.end > p.start);
-
-    if (picks.length < 1) throw new Error('No provider returned usable clip selections.');
-    picks.sort((a,b) => b.score - a.score);
-    picks.forEach((p,i) => p.rank = i + 1);
+    candidates.sort((a, b) => b.score - a.score);
+    const picks = [];
+    for (const candidate of candidates) {
+      const overlap = picks.some(x => Math.max(x.start, candidate.start) < Math.min(x.end, candidate.end) - 2);
+      if (!overlap) picks.push(candidate);
+      if (picks.length >= 50) break;
+    }
+    if (picks.length < 50) {
+      for (const candidate of candidates) {
+        if (!picks.includes(candidate)) picks.push(candidate);
+        if (picks.length >= 50) break;
+      }
+    }
+    picks.sort((a, b) => b.score - a.score);
+    picks.forEach((p, i) => p.rank = i + 1);
     const finalPicks = picks.slice(0, 50);
+    if (!finalPicks.length) throw new Error('No provider returned usable clip selections.');
 
-    await st(42, \`Rendering \${finalPicks.length} selected clips…\`);
+    await st(42, `Rendering ${finalPicks.length} selected clips…`);
     const done = [];
     let cursor = 0;
 
