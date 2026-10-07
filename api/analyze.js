@@ -6,6 +6,7 @@ const WORKER = String.raw\`const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
 const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 
 const ex = promisify(execFile);
 const job = '__JOB_ID__';
@@ -14,7 +15,105 @@ const root = '/workspace';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
 const jf = dir + '/job.json';
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const PROVIDERS = String(process.env.AI_PROVIDER_ORDER || 'groq,gemini,openai').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+const disabledUntil = new Map();
+const paidAllowed = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true';
+const paidMaxUsd = Math.max(0, Number(process.env.PAID_FALLBACK_MAX_USD || 0));
+let estimatedPaidUsd = 0;
+
+function providerReady(p) {
+  if ((disabledUntil.get(p) || 0) > Date.now()) return false;
+  if (p === 'groq') return !!process.env.GROQ_API_KEY;
+  if (p === 'gemini') return !!process.env.GEMINI_API_KEY;
+  return paidAllowed && !!process.env.OPENAI_API_KEY && estimatedPaidUsd < paidMaxUsd;
+}
+function disableProvider(p, e) {
+  const status = Number(e?.status || 0);
+  let ms = 30000;
+  try {
+    const h = e?.headers;
+    const retry = h?.get ? h.get('retry-after') : h?.['retry-after'];
+    if (retry) ms = Math.max(10000, Number(retry) * 1000);
+    const remaining = h?.get ? h.get('x-ratelimit-remaining-requests') : h?.['x-ratelimit-remaining-requests'];
+    if (String(remaining) === '0') ms = 86400000;
+  } catch {}
+  if (status === 429 || status === 403) disabledUntil.set(p, Date.now() + ms);
+}
+function groqClient() { return new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' }); }
+function geminiClient() { return new OpenAI({ apiKey: process.env.GEMINI_API_KEY, baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/' }); }
+function paidClient() { return new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); }
+function parseJson(text) {
+  let t = String(text || '').trim().replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/i, '');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) t = t.slice(a, b + 1);
+  return JSON.parse(t);
+}
+async function retryProvider(name, fn) {
+  let last;
+  for (let i = 0; i < 2; i++) {
+    try { return await fn(); } catch (e) {
+      last = e; disableProvider(name, e);
+      if (i === 0 && ![400,401,403,404].includes(Number(e?.status || 0))) await new Promise(r => setTimeout(r, 800));
+    }
+  }
+  throw last;
+}
+async function geminiTranscribe(file, offset) {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const uploaded = await retryProvider('gemini', () => ai.files.upload({ file, config: { mimeType: 'audio/mp3' } }));
+  const interaction = await retryProvider('gemini', () => ai.interactions.create({
+    model: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe',
+    input: [{ type: 'audio', uri: uploaded.uri, mime_type: uploaded.mimeType }],
+    generation_config: { transcription_config: { mode: { type: 'verbatim', timestamp_granularities: ['word'] } } }
+  }));
+  const words = [];
+  for (const step of (interaction.steps || [])) for (const content of (step.content || [])) for (const a of (content.annotations || [])) {
+    if (a.type !== 'word_info') continue;
+    const start = Number(a.start_offset?.seconds || a.start_time?.seconds || a.start_offset || a.start_time);
+    const end = Number(a.end_offset?.seconds || a.end_time?.seconds || a.end_offset || a.end_time);
+    const text = String(a.text || a.word || '').trim();
+    if (text && Number.isFinite(start) && Number.isFinite(end) && end > start) words.push({ start: offset + start, end: offset + end, text });
+  }
+  if (!words.length) throw new Error('Gemini returned no timestamped words');
+  const segments = [];
+  let cur = null;
+  for (const w of words) {
+    if (!cur || w.start - cur.end > 1.2 || cur.text.length > 220) {
+      if (cur) segments.push(cur);
+      cur = { start: w.start, end: w.end, text: w.text };
+    } else { cur.end = w.end; cur.text += ' ' + w.text; }
+  }
+  if (cur) segments.push(cur);
+  return segments;
+}
+async function transcribeWithFailover(file, offset) {
+  const errors = [];
+  for (const p of PROVIDERS) {
+    if (!providerReady(p)) continue;
+    try {
+      if (p === 'groq') {
+        const r = await retryProvider('groq', () => groqClient().audio.transcriptions.create({
+          file: require('fs').createReadStream(file), model: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo',
+          response_format: 'verbose_json', timestamp_granularities: ['segment'], temperature: 0
+        }));
+        const segs = (r.segments || []).map(s => ({ start: offset + Number(s.start || 0), end: offset + Number(s.end || 0), text: String(s.text || '').trim() })).filter(s => s.text && s.end > s.start);
+        if (!segs.length) throw new Error('Groq returned no segments');
+        return { provider: p, segments: segs };
+      }
+      if (p === 'gemini') return { provider: p, segments: await geminiTranscribe(file, offset) };
+      if (p === 'openai') {
+        const r = await retryProvider('openai', () => paidClient().audio.transcriptions.create({
+          file: require('fs').createReadStream(file), model: 'gpt-4o-mini-transcribe', response_format: 'verbose_json', timestamp_granularities: ['segment']
+        }));
+        estimatedPaidUsd += 0.01;
+        const segs = (r.segments || []).map(s => ({ start: offset + Number(s.start || 0), end: offset + Number(s.end || 0), text: String(s.text || '').trim() })).filter(s => s.text && s.end > s.start);
+        if (!segs.length) throw new Error('Paid provider returned no segments');
+        return { provider: p, segments: segs };
+      }
+    } catch (e) { errors.push(p + ': ' + (e?.message || String(e))); }
+  }
+  throw new Error('All transcription providers failed. ' + errors.join(' | '));
+}
 
 async function st(progress, message, status = 'processing', extra = {}) {
   let j = { id: job, status, progress, message, clips: [] };
@@ -49,28 +148,17 @@ function srtTime(sec) {
 async function transcribeInChunks(audio) {
   const chunkDir = out + '/audio-chunks';
   await mkdir(chunkDir, { recursive: true });
-  await cmd('ffmpeg', ['-y','-i',audio,'-f','segment','-segment_time','600','-c:a','libmp3lame','-b:a','96k',chunkDir+'/part-%03d.mp3']);
+  await cmd('ffmpeg', ['-y','-i',audio,'-f','segment','-segment_time','600','-c:a','libmp3lame','-b:a','64k',chunkDir+'/part-%03d.mp3']);
   const files = (await readdir(chunkDir)).filter(x => x.endsWith('.mp3')).sort();
   const all = [];
-  for (let i = 0; i < files.length; i++) {
-    const file = chunkDir + '/' + files[i];
-    const offset = i * 600;
-    const r = await openai.audio.transcriptions.create({
-      file: require('fs').createReadStream(file),
-      model: 'gpt-4o-mini-transcribe',
-      response_format: 'verbose_json',
-      timestamp_granularities: ['segment']
-    });
-    for (const s of (r.segments || [])) {
-      const start = offset + Number(s.start || 0);
-      const end = offset + Number(s.end || 0);
-      if (end > start && String(s.text || '').trim()) {
-        all.push({ start, end, text: String(s.text).trim() });
-      }
-    }
-    await st(18 + Math.round(((i + 1) / files.length) * 18), \`Transcribing part \${i + 1} of \${files.length}…\`);
+  const used = {};
+  for (let i=0;i<files.length;i++) {
+    const result = await transcribeWithFailover(chunkDir+'/'+files[i], i*600);
+    used[result.provider] = (used[result.provider] || 0) + 1;
+    all.push(...result.segments);
+    await st(18 + Math.round(((i+1)/files.length)*18), 'Transcribing part '+(i+1)+' of '+files.length+' with '+result.provider+'…', 'processing', { providers: used });
   }
-  if (!all.length) throw new Error('OpenAI returned no timestamped transcript segments.');
+  if (!all.length) throw new Error('No timestamped transcript segments were produced.');
   return all;
 }
 
@@ -113,7 +201,7 @@ async function main() {
       \`\${i}|\\\${s.start.toFixed(2)}-\${s.end.toFixed(2)}|\\\${s.text}\`
     ).join('\\n');
 
-    await st(38, 'AI is scoring hooks, retention and shareability…');
+    await st(38, 'AI is scoring hooks, retention and shareability with automatic provider failover…');
     const prompt = \`You are the senior editor for a premium short-form clipping studio.
 
 Select exactly 50 DISTINCT moments from this transcript that have the strongest potential as standalone short-form videos.
@@ -139,16 +227,32 @@ Score from 0-100. Use the transcript timestamps exactly and keep start/end withi
 TRANSCRIPT:
 \${transcript}\`;
 
-    const r = await openai.chat.completions.create({
-      model: 'gpt-5.4-mini',
-      messages: [
-        { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
-        { role: 'user', content: prompt }
-      ],
-      response_format: { type: 'json_object' }
-    });
+    let r;
+    let selectedProvider = '';
+    const selectionMessages = [
+      { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
+      { role: 'user', content: prompt }
+    ];
+    const errors = [];
+    for (const provider of PROVIDERS) {
+      if (!providerReady(provider)) continue;
+      try {
+        if (provider === 'groq') {
+          r = await retryProvider('groq', () => groqClient().chat.completions.create({ model: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', messages: selectionMessages, temperature: 0.2 }));
+        } else if (provider === 'gemini') {
+          r = await retryProvider('gemini', () => geminiClient().chat.completions.create({ model: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', messages: selectionMessages, temperature: 0.2 }));
+        } else {
+          r = await retryProvider('openai', () => paidClient().chat.completions.create({ model: 'gpt-5.4-mini', messages: selectionMessages, temperature: 0.2, response_format: { type: 'json_object' } }));
+          estimatedPaidUsd += 0.02;
+        }
+        selectedProvider = provider;
+        break;
+      } catch (e) { errors.push(provider + ': ' + (e?.message || String(e))); }
+    }
+    if (!r) throw new Error('All clip-selection providers failed. ' + errors.join(' | '));
 
-    const parsed = JSON.parse(r.choices?.[0]?.message?.content || '{}');
+
+    const parsed = parseJson(r.choices?.[0]?.message?.content || '{}');
     const picks = (Array.isArray(parsed.clips) ? parsed.clips : [])
       .map((p, i) => {
         const start = Math.max(0, Number(p.start) - 1.2);
@@ -225,9 +329,9 @@ exports.default = async (req, res) => {
     if (typeof url !== 'string' || !/^https?:\\/\\/(www\\.)?(youtube\\.com|youtu\\.be)\\//i.test(url)) {
       return res.status(400).json({ error: 'Use a valid YouTube URL.' });
     }
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI is not connected yet. Add OPENAI_API_KEY to the Vercel project environment variables.' });
-    }
+    const hasFree = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
+    const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
+    if (!hasFree && !paid) return res.status(500).json({ error: 'No AI provider is connected. Add GROQ_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.' });
 
     const token = await getVercelOidcToken();
     const sb = await Sandbox.getOrCreate({
@@ -255,7 +359,7 @@ exports.default = async (req, res) => {
     await sb.runCommand({
       cmd: 'bash',
       args: ['-lc', 'nohup node ' + workerPath + ' >/workspace/jobs/' + id + '/worker.log 2>&1 &'],
-      env: { VERCEL_OIDC_TOKEN: token, OPENAI_API_KEY: process.env.OPENAI_API_KEY }
+      env: { VERCEL_OIDC_TOKEN: token, GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
