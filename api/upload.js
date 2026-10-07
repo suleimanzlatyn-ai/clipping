@@ -21,7 +21,7 @@ module.exports = async (req, res) => {
     const sb = await Sandbox.create({
       name: 'clip-job-' + id,
       persistent: true,
-      timeout: 45 * 60 * 1000,
+      timeout: 40 * 60 * 1000,
       resources: { vcpus: 4 },
       networkPolicy: 'allow-all',
       ports: [8787, 8788]
