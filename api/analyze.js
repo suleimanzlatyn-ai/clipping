@@ -325,9 +325,7 @@ ${transcript}`;
 
 main();\`;
 
-exports.maxDuration = 60;
-
-exports.default = async (req, res) => {
+module.exports = async (req, res) => {
   try {
     const { url } = req.body || {};
     if (typeof url !== 'string' || !/^https?:\\/\\/(www\\.)?(youtube\\.com|youtu\\.be)\\//i.test(url)) {
@@ -375,5 +373,4 @@ exports.default = async (req, res) => {
     return res.json({ jobId: id, status: 'queued' });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Could not start worker' });
-  }
-};
+  }\n};\n
