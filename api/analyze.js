@@ -6,12 +6,12 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir, unlink } = require('node:fs/promises');
 let OpenAI;
-let blobDel;
 
 const ex = promisify(execFile);
 const job = '__JOB_ID__';
 const url = __URL__;
 const sourceUrl = __SOURCE_URL__;
+const directUploadPath = __DIRECT_UPLOAD_PATH__;
 const root = '/workspace';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
@@ -162,11 +162,7 @@ async function ensureTools() {
   try { require.resolve('@google/genai'); } catch {
     await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, '@google/genai']);
   }
-  try { require.resolve('@vercel/blob'); } catch {
-    await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, '@vercel/blob@2.8.1']);
-  }
   OpenAI = require('openai');
-  try { blobDel = (await import('@vercel/blob')).del; } catch { blobDel = null; }
   try { await cmd('ffmpeg', ['-version']); }
   catch {
     await cmd('sudo', ['apt-get', 'update', '-qq']);
@@ -548,9 +544,6 @@ TRANSCRIPT:
     const message = String(e?.message || e || 'Unknown processing error').slice(0, 2200);
     await st(100, 'Processing failed', 'error', { error: message });
   } finally {
-    if (sourceUrl && blobDel && process.env.BLOB_READ_WRITE_TOKEN) {
-      try { await blobDel(sourceUrl, { token: process.env.BLOB_READ_WRITE_TOKEN }); } catch {}
-    }
   }
 }
 main();`;
