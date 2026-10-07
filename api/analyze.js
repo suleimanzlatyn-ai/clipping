@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 
-const WORKER = String.raw`const { execFile } = require('node:child_process');
+const WORKER = String.raw`import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
 const OpenAI = require('openai');
@@ -87,8 +89,9 @@ async function geminiTranscribe(file, offset) {
 async function gatewayTranscribe(file, offset) {
   const { experimental_transcribe } = await import('ai');
   const result = await experimental_transcribe({
-    model: 'openai/gpt-4o-mini-transcribe',
+    model: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1',
     audio: await readFile(file),
+    providerOptions: { openai: { timestampGranularities: ['segment'] } },
     maxRetries: 2
   });
   const segs = (result.segments || [])
@@ -145,6 +148,7 @@ async function cmd(command, args, options = {}) {
 }
 
 async function ensureTools() {
+  try { require.resolve('ai'); } catch { await cmd('npm', ['install', '--silent', 'ai@7.0.122']); }
   try { require.resolve('openai'); } catch { await cmd('npm', ['install', '--silent', 'openai']); }
   try { require.resolve('@google/genai'); } catch { await cmd('npm', ['install', '--silent', '@google/genai']); }
   try { await cmd('ffmpeg', ['-version']); }
@@ -251,7 +255,7 @@ TRANSCRIPT:
           if (provider === 'gateway') {
             const { generateText } = await import('ai');
             const gatewayResult = await retryProvider('gateway', () => generateText({
-              model: 'openai/gpt-oss-120b',
+              model: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b',
               messages,
               temperature: 0.2,
               maxOutputTokens: 1800
@@ -390,12 +394,12 @@ module.exports = async (req, res) => {
       cmd: 'node',
       args: [workerPath],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
       cmd: 'python3',
-      args: ['-m', 'http.server', '8787', '--directory', '/workspace'],
+      args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'],
       detached: true,
       env: {}
     });
