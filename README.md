@@ -2,6 +2,12 @@
 
 Private, free-first YouTube clipping workflow.
 
+## Live site
+
+**https://clipping-beryl.vercel.app/**
+
+This is the current Vercel site for this repository.
+
 ## Stack
 
 - Vercel: frontend + API launcher
@@ -31,7 +37,8 @@ Never commit API keys to GitHub.
 1. Import this repository into your Vercel account.
 2. Add the environment variables in Vercel.
 3. Deploy.
-4. Open the deployed site and paste a YouTube URL you own or are authorized to process.
+4. Open the deployed site: https://clipping-beryl.vercel.app/
+5. Paste a YouTube URL you own or are authorized to process.
 
 ## Processing flow
 
