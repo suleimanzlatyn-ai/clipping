@@ -14,6 +14,7 @@ const root = '/workspace';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
 const jf = dir + '/job.json';
+const logf = dir + '/worker.log';
 const PROVIDERS = String(process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
 const disabledUntil = new Map();
 const paidAllowed = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true';
@@ -200,6 +201,7 @@ async function main() {
   try {
     if (!PROVIDERS.some(providerReady)) throw new Error('No AI provider is configured on the worker.');
     await mkdir(out, { recursive: true });
+    await st(2, 'Starting the analysis worker…');
     await st(3, 'Preparing the video engine…');
     await ensureTools();
 
@@ -399,8 +401,8 @@ module.exports = async (req, res) => {
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
     await sb.runCommand({
-      cmd: 'node',
-      args: [workerPath],
+      cmd: 'sh',
+      args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify(logf) + ' 2>&1'],
       detached: true,
       env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/whisper-1', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
