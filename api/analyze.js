@@ -320,7 +320,7 @@ TRANSCRIPT:
     await st(100, 'Processing failed', 'error', { error: e?.stderr || e?.message || String(e) });
   }
 }
-\nmain();`;
+main();`;
 
 module.exports = async (req, res) => {
   try {
