@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: clipping-ai-studio
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: RENDER
+        value: "1"
+      - key: CLIP_RENDER_WORKERS
+        value: "1"
+      - key: AI_PROVIDER_ORDER
+        value: "gateway,groq,gemini,openai"
+      - key: ALLOW_PAID_FALLBACK
+        value: "false"
+      - key: PAID_FALLBACK_MAX_USD
+        value: "0"
