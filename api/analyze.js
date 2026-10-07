@@ -127,6 +127,7 @@ async function cmd(command, args, options = {}) {
 
 async function ensureTools() {
   try { require.resolve('openai'); } catch { await cmd('npm', ['install', '--silent', 'openai']); }
+  try { require.resolve('@google/genai'); } catch { await cmd('npm', ['install', '--silent', '@google/genai']); }
   try { await cmd('ffmpeg', ['-version']); }
   catch {
     await cmd('sudo', ['apt-get', 'update', '-qq']);
@@ -173,7 +174,7 @@ function makeSrt(segments, start, end) {
 
 async function main() {
   try {
-    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not configured on the worker.');
+    if (!PROVIDERS.some(providerReady)) throw new Error('No AI provider is configured on the worker.');
     await mkdir(out, { recursive: true });
     await st(3, 'Preparing the video engine…');
     await ensureTools();
@@ -268,7 +269,7 @@ TRANSCRIPT:
       })
       .filter(p => Number.isFinite(p.start) && Number.isFinite(p.end) && p.end > p.start);
 
-    if (picks.length < 1) throw new Error('OpenAI did not return usable clip selections.');
+    if (picks.length < 1) throw new Error('No provider returned usable clip selections.');
     picks.sort((a,b) => b.score - a.score);
     picks.forEach((p,i) => p.rank = i + 1);
     const finalPicks = picks.slice(0, 50);
