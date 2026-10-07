@@ -27,6 +27,7 @@ async function cmd(command, args, options = {}) {
 }
 
 async function ensureTools() {
+  try { require.resolve('openai'); } catch { await cmd('npm', ['install', '--silent', 'openai']); }
   try { await cmd('ffmpeg', ['-version']); }
   catch {
     await cmd('sudo', ['apt-get', 'update', '-qq']);
