@@ -13,9 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Parse analyze route
-        run: node -e "const fs=require('fs'); new Function(fs.readFileSync('api/analyze.js','utf8')); console.log('analyze.js parse OK')"
-      - name: Parse job route
-        run: node -e "const fs=require('fs'); new Function(fs.readFileSync('api/jobs/[id].js','utf8')); console.log('jobs route parse OK')"
+      - name: Parse API routes
+        run: |
+          node -e "const fs=require('fs'); new Function(fs.readFileSync('api/analyze.js','utf8')); new Function(fs.readFileSync('api/jobs/[id].js','utf8')); console.log('API syntax OK')"
+      - name: Load API routes
+        run: |
+          node -e "const a=require('./api/analyze.js'); if(typeof a!=='function') throw new Error('analyze handler missing'); const j=require('./api/jobs/[id].js'); if(typeof j!=='function') throw new Error('job handler missing'); console.log('API modules load OK')"
       - name: Validate package
-        run: node -e "const p=require('./package.json'); if(!p.dependencies['@google/genai']) throw new Error('Missing @google/genai'); if(!p.dependencies['@vercel/sandbox']) throw new Error('Missing @vercel/sandbox'); console.log('package OK')"
+        run: |
+          node -e "const p=require('./package.json'); for(const x of ['@google/genai','@vercel/sandbox','openai']) if(!p.dependencies[x]) throw new Error('Missing '+x); console.log('package OK')"
