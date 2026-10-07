@@ -10,6 +10,7 @@ let OpenAI;
 const ex = promisify(execFile);
 const job = '__JOB_ID__';
 const url = __URL__;
+const sourceUrl = __SOURCE_URL__;
 const root = '/workspace';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
@@ -318,7 +319,7 @@ async function runOpusImportAndClipping() {
 
 async function main() {
   try {
-    if (process.env.OPUSCLIP_API_KEY) {
+    if (process.env.OPUSCLIP_API_KEY && url) {
       await mkdir(out, { recursive: true });
       await st(2, 'Starting the OpusClip-compatible import engine…');
       await runOpusImportAndClipping();
@@ -330,61 +331,74 @@ async function main() {
     await st(3, 'Preparing the video engine…');
     await ensureTools();
 
-    await st(9, 'Fetching the authorized source video…');
-    const cookieFile = root + '/youtube-cookies.txt';
-    let cookieConfigured = false;
-    try {
-      const rawCookies = String(process.env.YOUTUBE_COOKIES || '');
-      const b64Cookies = String(process.env.YOUTUBE_COOKIES_B64 || '');
-      let cookieText = rawCookies;
-      if (!cookieText && b64Cookies) {
-        try {
-          cookieText = Buffer.from(b64Cookies, 'base64').toString('utf8');
-        } catch {}
-      }
-      if (cookieText.trim()) {
-        // Keep the authenticated cookie jar private to this sandbox worker.
-        await writeFile(cookieFile, cookieText, { encoding: 'utf8', mode: 0o600 });
-        cookieConfigured = true;
-      }
+    let sourcePath = out + '/source.mp4';
+    if (sourceUrl) {
+      await st(9, 'Downloading the uploaded source video…');
+      await cmd('curl', [
+        '-L', '--fail', '--show-error',
+        '--retry', '3', '--retry-all-errors',
+        '--connect-timeout', '20',
+        '--max-time', '3600',
+        '-o', sourcePath,
+        sourceUrl
+      ]);
+      await st(15, 'Source video uploaded successfully. Starting AI analysis…');
+    } else {
+      await st(9, 'Fetching the authorized YouTube source video…');
+      const cookieFile = root + '/youtube-cookies.txt';
+      let cookieConfigured = false;
+      try {
+        const rawCookies = String(process.env.YOUTUBE_COOKIES || '');
+        const b64Cookies = String(process.env.YOUTUBE_COOKIES_B64 || '');
+        let cookieText = rawCookies;
+        if (!cookieText && b64Cookies) {
+          try {
+            cookieText = Buffer.from(b64Cookies, 'base64').toString('utf8');
+          } catch {}
+        }
+        if (cookieText.trim()) {
+          await writeFile(cookieFile, cookieText, { encoding: 'utf8', mode: 0o600 });
+          cookieConfigured = true;
+        }
 
-      const args = [
-        '--no-playlist',
-        '--js-runtimes', 'deno',
-        '--remote-components', 'ejs:npm',
-        '--retries', '3',
-        '--fragment-retries', '3',
-        '--extractor-retries', '3',
-        '--socket-timeout', '20',
-        '--concurrent-fragments', '4',
-        '-f', 'bv*[height<=1080]+ba/b[height<=1080]',
-        '--merge-output-format', 'mp4'
-      ];
-      if (cookieConfigured) args.push('--cookies', cookieFile);
-      if (String(process.env.YOUTUBE_USER_AGENT || '').trim()) {
-        args.push('--user-agent', String(process.env.YOUTUBE_USER_AGENT).trim());
+        const args = [
+          '--no-playlist',
+          '--js-runtimes', 'deno',
+          '--remote-components', 'ejs:npm',
+          '--retries', '3',
+          '--fragment-retries', '3',
+          '--extractor-retries', '3',
+          '--socket-timeout', '20',
+          '--concurrent-fragments', '4',
+          '-f', 'bv*[height<=1080]+ba/b[height<=1080]',
+          '--merge-output-format', 'mp4'
+        ];
+        if (cookieConfigured) args.push('--cookies', cookieFile);
+        if (String(process.env.YOUTUBE_USER_AGENT || '').trim()) {
+          args.push('--user-agent', String(process.env.YOUTUBE_USER_AGENT).trim());
+        }
+        args.push('-o', out + '/source.%(ext)s', url);
+        await cmd('yt-dlp', args);
+      } catch (e) {
+        const raw = String(e?.stderr || e?.message || e || '');
+        if (/sign in to confirm|not a bot|confirm you.?re not a bot|LOGIN_REQUIRED|sign.?in required|cookies/i.test(raw)) {
+          throw new Error(
+            cookieConfigured
+              ? 'YouTube rejected the configured authenticated request. Re-export fresh cookies from the account that is authorized to access this video and update the Vercel secret, or use a direct video upload.'
+              : 'YouTube requires an authenticated request for this video. Configure YOUTUBE_COOKIES_B64 (or YOUTUBE_COOKIES) with cookies from an account authorized to access the video, or use a direct video upload.'
+          );
+        }
+        if (/javascript runtime|js runtime|EJS|no supported JavaScript/i.test(raw)) {
+          throw new Error('YouTube extraction still cannot initialize its JavaScript runtime. Deno and yt-dlp-ejs installation failed or are unavailable in the worker.');
+        }
+        throw new Error('Video download failed: ' + raw.slice(-1800));
+      } finally {
+        try { await unlink(cookieFile); } catch {}
       }
-      args.push('-o', out + '/source.%(ext)s', url);
-      await cmd('yt-dlp', args);
-    } catch (e) {
-      const raw = String(e?.stderr || e?.message || e || '');
-      if (/sign in to confirm|not a bot|confirm you.?re not a bot|LOGIN_REQUIRED|sign.?in required|cookies/i.test(raw)) {
-        throw new Error(
-          cookieConfigured
-            ? 'YouTube rejected the configured authenticated request. Re-export fresh cookies from the account that is authorized to access this video and update the Vercel secret, or use a direct video upload.'
-            : 'YouTube requires an authenticated request for this video. Configure YOUTUBE_COOKIES_B64 (or YOUTUBE_COOKIES) with cookies from an account authorized to access the video, or use a direct video upload.'
-        );
-      }
-      if (/javascript runtime|js runtime|EJS|no supported JavaScript/i.test(raw)) {
-        throw new Error('YouTube extraction still cannot initialize its JavaScript runtime. Deno and yt-dlp-ejs installation failed or are unavailable in the worker.');
-      }
-      throw new Error('Video download failed: ' + raw.slice(-1800));
-    } finally {
-      try { await unlink(cookieFile); } catch {}
+      const source = (await readdir(out)).find(x => /^source\./.test(x) && x.endsWith('.mp4'));
+      if (!source) throw new Error('The source video could not be downloaded.');
+      sourcePath = out + '/' + source;
     }
-    const source = (await readdir(out)).find(x => /^source\\./.test(x) && x.endsWith('.mp4'));
-    if (!source) throw new Error('The source video could not be downloaded.');
-    const sourcePath = out + '/' + source;
 
     await st(16, 'Extracting audio for AI analysis…');
     await cmd('ffmpeg', ['-y','-i',sourcePath,'-vn','-ac','1','-ar','16000','-c:a','libmp3lame','-b:a','96k',out+'/audio.mp3']);
@@ -531,9 +545,13 @@ main();`;
 
 module.exports = async (req, res) => {
   try {
-    const { url } = req.body || {};
-    if (typeof url !== 'string' || !/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
-      return res.status(400).json({ error: 'Use a valid YouTube URL.' });
+    const { url: rawUrl, sourceUrl: rawSourceUrl } = req.body || {};
+    const url = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+    const sourceUrl = typeof rawSourceUrl === 'string' ? rawSourceUrl.trim() : '';
+    const validYouTube = /^https?:\/\/(www\\.)?(youtube\\.com|youtu\\.be)\//i.test(url);
+    const validBlob = /^https:\/\/[a-z0-9-]+\\.public\\.blob\\.vercel-storage\\.com\//i.test(sourceUrl);
+    if ((!validYouTube && !validBlob) || (validYouTube && sourceUrl)) {
+      return res.status(400).json({ error: 'Provide either a valid YouTube URL or an uploaded video source.' });
     }
     let gatewayAuth = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || '';
     if (!process.env.AI_GATEWAY_API_KEY) {
@@ -545,7 +563,7 @@ module.exports = async (req, res) => {
     const hasGateway = !!gatewayAuth;
     const hasDirect = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
-    if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'This Vercel deployment could not obtain an AI Gateway credential. Vercel OIDC is required for the no-key setup, or an AI Gateway API key can be configured.' });
+    if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'No AI provider is configured. Enable Vercel AI Gateway/OIDC or configure Groq/Gemini.' });
 
     const id = crypto.randomUUID();
     const { Sandbox } = await import('@vercel/sandbox');
@@ -566,7 +584,7 @@ module.exports = async (req, res) => {
       }))
     }]);
 
-    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replaceAll('\\${', '${').replaceAll('\\`', '`');
+    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replace('__SOURCE_URL__', JSON.stringify(sourceUrl)).replaceAll('\\${', '${').replaceAll('\\`', '`');
     const workerPath = '/workspace/run-' + id + '.mjs';
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
