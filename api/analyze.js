@@ -5,7 +5,7 @@ const require = createRequire(import.meta.url);
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
-const OpenAI = require('openai');
+let OpenAI;
 
 const ex = promisify(execFile);
 const job = '__JOB_ID__';
@@ -150,9 +150,17 @@ async function cmd(command, args, options = {}) {
 }
 
 async function ensureTools() {
-  try { require.resolve('ai'); } catch { await cmd('npm', ['install', '--silent', 'ai@7.0.122']); }
-  try { require.resolve('openai'); } catch { await cmd('npm', ['install', '--silent', 'openai']); }
-  try { require.resolve('@google/genai'); } catch { await cmd('npm', ['install', '--silent', '@google/genai']); }
+  const nodeCwd = root;
+  try { require.resolve('ai'); } catch {
+    await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, 'ai@7.0.122']);
+  }
+  try { require.resolve('openai'); } catch {
+    await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, 'openai']);
+  }
+  try { require.resolve('@google/genai'); } catch {
+    await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, '@google/genai']);
+  }
+  OpenAI = require('openai');
   try { await cmd('ffmpeg', ['-version']); }
   catch {
     await cmd('sudo', ['apt-get', 'update', '-qq']);
