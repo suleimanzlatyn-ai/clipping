@@ -4,7 +4,7 @@ const WORKER = String.raw`import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
+const { readFile, writeFile, mkdir, readdir, unlink } = require('node:fs/promises');
 let OpenAI;
 
 const ex = promisify(execFile);
@@ -235,8 +235,24 @@ async function main() {
     await ensureTools();
 
     await st(9, 'Fetching the authorized source video…');
+    const cookieFile = root + '/youtube-cookies.txt';
+    let cookieConfigured = false;
     try {
-      await cmd('yt-dlp', [
+      const rawCookies = String(process.env.YOUTUBE_COOKIES || '');
+      const b64Cookies = String(process.env.YOUTUBE_COOKIES_B64 || '');
+      let cookieText = rawCookies;
+      if (!cookieText && b64Cookies) {
+        try {
+          cookieText = Buffer.from(b64Cookies, 'base64').toString('utf8');
+        } catch {}
+      }
+      if (cookieText.trim()) {
+        // Keep the authenticated cookie jar private to this sandbox worker.
+        await writeFile(cookieFile, cookieText, { encoding: 'utf8', mode: 0o600 });
+        cookieConfigured = true;
+      }
+
+      const args = [
         '--no-playlist',
         '--js-runtimes', 'deno',
         '--remote-components', 'ejs:npm',
@@ -246,23 +262,29 @@ async function main() {
         '--socket-timeout', '20',
         '--concurrent-fragments', '4',
         '-f', 'bv*[height<=1080]+ba/b[height<=1080]',
-        '--merge-output-format', 'mp4',
-        '-o', out + '/source.%(ext)s',
-        url
-      ]);
+        '--merge-output-format', 'mp4'
+      ];
+      if (cookieConfigured) args.push('--cookies', cookieFile);
+      if (String(process.env.YOUTUBE_USER_AGENT || '').trim()) {
+        args.push('--user-agent', String(process.env.YOUTUBE_USER_AGENT).trim());
+      }
+      args.push('-o', out + '/source.%(ext)s', url);
+      await cmd('yt-dlp', args);
     } catch (e) {
       const raw = String(e?.stderr || e?.message || e || '');
-      if (/sign in to confirm|not a bot|confirm you.?re not a bot|cookies-from-browser|cookies/i.test(raw)) {
+      if (/sign in to confirm|not a bot|confirm you.?re not a bot|LOGIN_REQUIRED|sign.?in required|cookies/i.test(raw)) {
         throw new Error(
-          'YouTube rejected this server request with bot verification. ' +
-          'Deno/EJS is installed, but YouTube still requires an authenticated request for this video. ' +
-          'Use a video you own or are authorized to process and provide an authorized source/cookie configuration rather than bypassing YouTube verification.'
+          cookieConfigured
+            ? 'YouTube rejected the configured authenticated request. Re-export fresh cookies from the account that is authorized to access this video and update the Vercel secret, or use a direct video upload.'
+            : 'YouTube requires an authenticated request for this video. Configure YOUTUBE_COOKIES_B64 (or YOUTUBE_COOKIES) with cookies from an account authorized to access the video, or use a direct video upload.'
         );
       }
       if (/javascript runtime|js runtime|EJS|no supported JavaScript/i.test(raw)) {
         throw new Error('YouTube extraction still cannot initialize its JavaScript runtime. Deno and yt-dlp-ejs installation failed or are unavailable in the worker.');
       }
       throw new Error('Video download failed: ' + raw.slice(-1800));
+    } finally {
+      try { await unlink(cookieFile); } catch {}
     }
     const source = (await readdir(out)).find(x => /^source\\./.test(x) && x.endsWith('.mp4'));
     if (!source) throw new Error('The source video could not be downloaded.');
@@ -456,7 +478,7 @@ module.exports = async (req, res) => {
       cmd: 'sh',
       args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
