@@ -6,6 +6,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir, unlink } = require('node:fs/promises');
 let OpenAI;
+let blobDel;
 
 const ex = promisify(execFile);
 const job = '__JOB_ID__';
@@ -161,7 +162,11 @@ async function ensureTools() {
   try { require.resolve('@google/genai'); } catch {
     await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, '@google/genai']);
   }
+  try { require.resolve('@vercel/blob'); } catch {
+    await cmd('npm', ['install', '--silent', '--no-audit', '--no-fund', '--prefix', nodeCwd, '@vercel/blob@2.8.1']);
+  }
   OpenAI = require('openai');
+  try { blobDel = (await import('@vercel/blob')).del; } catch { blobDel = null; }
   try { await cmd('ffmpeg', ['-version']); }
   catch {
     await cmd('sudo', ['apt-get', 'update', '-qq']);
@@ -531,6 +536,9 @@ TRANSCRIPT:
     }
 
     await Promise.all(Array.from({ length: Math.min(4, finalPicks.length) }, () => worker()));
+    try { await unlink(sourcePath); } catch {}
+    try { await unlink(out + '/audio.mp3'); } catch {}
+    try { await unlink(out + '/transcript.json'); } catch {}
     await writeFile(jf, JSON.stringify({
       id: job, status: 'done', progress: 100,
       message: \`Finished \${done.length} clips.\`,
@@ -539,6 +547,10 @@ TRANSCRIPT:
   } catch (e) {
     const message = String(e?.message || e || 'Unknown processing error').slice(0, 2200);
     await st(100, 'Processing failed', 'error', { error: message });
+  } finally {
+    if (sourceUrl && blobDel && process.env.BLOB_READ_WRITE_TOKEN) {
+      try { await blobDel(sourceUrl, { token: process.env.BLOB_READ_WRITE_TOKEN }); } catch {}
+    }
   }
 }
 main();`;
@@ -592,7 +604,7 @@ module.exports = async (req, res) => {
       cmd: 'sh',
       args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
