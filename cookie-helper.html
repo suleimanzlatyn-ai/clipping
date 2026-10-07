@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Secure YouTube Cookie Setup — AI Clip Studio</title>
+<style>
+body{margin:0;background:#07080a;color:#f4f5f7;font:15px Arial,sans-serif}
+main{max-width:760px;margin:auto;padding:32px 20px 60px}
+.card{background:#0e1014;border:1px solid #20242b;border-radius:20px;padding:24px}
+h1{margin:0 0 10px;font-size:34px;letter-spacing:-1px}
+p{color:#a4a9b2;line-height:1.7}
+label{display:block;margin:20px 0 8px;font-weight:700}
+input,textarea,button{font:inherit}
+input[type=file]{width:100%;box-sizing:border-box;padding:14px;background:#0a0c0f;border:1px solid #2b3037;border-radius:12px;color:#d7dbe2}
+textarea{width:100%;min-height:180px;box-sizing:border-box;background:#0a0c0f;border:1px solid #2b3037;border-radius:12px;color:#d7dbe2;padding:14px;resize:vertical}
+button{margin-top:12px;background:#c8ff3d;border:0;border-radius:11px;padding:13px 18px;font-weight:800;cursor:pointer}
+.note{font-size:12px;color:#7e8791}
+.ok{color:#c8ff3d}
+.err{color:#ff9ca7}
+</style>
+</head>
+<body>
+<main>
+<div class="card">
+<h1>Secure YouTube cookie setup</h1>
+<p>This page converts a cookie file to Base64 <strong>inside your browser only</strong>. Nothing is uploaded.</p>
+<label for="file">Choose your Netscape-format YouTube cookie file</label>
+<input id="file" type="file" accept=".txt,.cookies,text/plain">
+<button id="encode">Encode locally</button>
+<p id="status" class="note"></p>
+<label for="output">YOUTUBE_COOKIES_B64 value</label>
+<textarea id="output" readonly placeholder="Your Base64 value will appear here."></textarea>
+<button id="copy" disabled>Copy value</button>
+<p class="note">Paste the copied value into Vercel → Project → Settings → Environment Variables → <strong>YOUTUBE_COOKIES_B64</strong>. Never put it in GitHub.</p>
+</div>
+<script>
+const fileEl=document.getElementById('file');
+const out=document.getElementById('output');
+const status=document.getElementById('status');
+const copy=document.getElementById('copy');
+function bytesToBase64(buf){
+ const bytes=new Uint8Array(buf);
+ let binary='';
+ const chunk=0x8000;
+ for(let i=0;i<bytes.length;i+=chunk){
+   binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+chunk,bytes.length)));
+ }
+ return btoa(binary);
+}
+document.getElementById('encode').onclick=async()=>{
+ status.className='note';
+ const file=fileEl.files&&fileEl.files[0];
+ if(!file){status.textContent='Choose the cookie file first.';status.className='note err';return}
+ try{
+   const text=await file.text();
+   if(!text.includes('# Netscape HTTP Cookie File')){
+     status.textContent='This does not look like a Netscape-format cookie file.';
+     status.className='note err';
+     return;
+   }
+   out.value=bytesToBase64(new TextEncoder().encode(text).buffer);
+   copy.disabled=false;
+   status.textContent='Encoded locally. No upload was performed.';
+   status.className='note ok';
+ }catch(e){
+   status.textContent='Could not read the file locally.';
+   status.className='note err';
+ }
+};
+copy.onclick=async()=>{
+ try{
+   await navigator.clipboard.writeText(out.value);
+   status.textContent='Copied. Paste it into the Vercel environment variable.';
+   status.className='note ok';
+ }catch{
+   out.focus();out.select();
+   status.textContent='Select the value manually and copy it.';
+ }
+};
+</script>
+</body>
+</html>
