@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 
-const WORKER = String.raw\`const { execFile } = require('node:child_process');
+const WORKER = String.raw`const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
 const OpenAI = require('openai');
@@ -320,8 +320,7 @@ ${transcript}`;
     await st(100, 'Processing failed', 'error', { error: e?.stderr || e?.message || String(e) });
   }
 }
-
-main();\`;
+\nmain();`;
 
 module.exports = async (req, res) => {
   try {
