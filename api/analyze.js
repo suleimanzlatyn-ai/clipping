@@ -325,7 +325,7 @@ main();`;
 module.exports = async (req, res) => {
   try {
     const { url } = req.body || {};
-    if (typeof url !== 'string' || !/^https?:\\/\\/(www\\.)?(youtube\\.com|youtu\\.be)\\//i.test(url)) {
+    if (typeof url !== 'string' || !/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
       return res.status(400).json({ error: 'Use a valid YouTube URL.' });
     }
     const hasFree = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
