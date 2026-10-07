@@ -333,7 +333,18 @@ async function main() {
     await ensureTools();
 
     let sourcePath = out + '/source.mp4';
-    if (sourceUrl) {
+    if (directUploadPath) {
+      await st(9, 'Opening the uploaded source video…');
+      try {
+        const probe = await cmd('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', directUploadPath]);
+        const duration = Number(probe.trim());
+        if (!Number.isFinite(duration) || duration <= 0) throw new Error('Invalid video');
+      } catch {
+        throw new Error('The uploaded video could not be opened. Please use MP4, WebM or MOV.');
+      }
+      sourcePath = directUploadPath;
+      await st(15, 'Upload received. Starting AI analysis…');
+    } else if (sourceUrl) {
       await st(9, 'Downloading the uploaded source video…');
       await cmd('curl', [
         '-L', '--fail', '--show-error',
