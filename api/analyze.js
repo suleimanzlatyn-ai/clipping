@@ -6,7 +6,6 @@ const WORKER = String.raw\`const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readFile, writeFile, mkdir, readdir } = require('node:fs/promises');
 const OpenAI = require('openai');
-const { GoogleGenAI } = require('@google/genai');
 
 const ex = promisify(execFile);
 const job = '__JOB_ID__';
@@ -59,6 +58,7 @@ async function retryProvider(name, fn) {
   throw last;
 }
 async function geminiTranscribe(file, offset) {
+  const { GoogleGenAI } = require('@google/genai');
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const uploaded = await retryProvider('gemini', () => ai.files.upload({ file, config: { mimeType: 'audio/mp3' } }));
   const interaction = await retryProvider('gemini', () => ai.interactions.create({
