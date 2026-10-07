@@ -12,7 +12,7 @@ const root = '/workspace';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
 const jf = dir + '/job.json';
-const PROVIDERS = String(process.env.AI_PROVIDER_ORDER || 'groq,gemini,openai').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+const PROVIDERS = String(process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
 const disabledUntil = new Map();
 const paidAllowed = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true';
 const paidMaxUsd = Math.max(0, Number(process.env.PAID_FALLBACK_MAX_USD || 0));
@@ -20,7 +20,7 @@ let estimatedPaidUsd = 0;
 
 function providerReady(p) {
   if ((disabledUntil.get(p) || 0) > Date.now()) return false;
-  if (p === 'groq') return !!process.env.GROQ_API_KEY;
+  if (p === 'gateway') return !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);\n  if (p === 'groq') return !!process.env.GROQ_API_KEY;
   if (p === 'gemini') return !!process.env.GEMINI_API_KEY;
   return paidAllowed && !!process.env.OPENAI_API_KEY && estimatedPaidUsd < paidMaxUsd;
 }
@@ -84,11 +84,32 @@ async function geminiTranscribe(file, offset) {
   if (cur) segments.push(cur);
   return segments;
 }
+async function gatewayTranscribe(file, offset) {
+  const { experimental_transcribe } = await import('ai');
+  const result = await experimental_transcribe({
+    model: 'openai/gpt-4o-mini-transcribe',
+    audio: await readFile(file),
+    maxRetries: 2
+  });
+  const segs = (result.segments || [])
+    .map(s => ({
+      start: offset + Number(s.startSecond || 0),
+      end: offset + Number(s.endSecond || 0),
+      text: String(s.text || '').trim()
+    }))
+    .filter(s => s.text && s.end > s.start);
+  if (!segs.length) throw new Error('AI Gateway transcription returned no timestamped segments');
+  return segs;
+}
+
 async function transcribeWithFailover(file, offset) {
   const errors = [];
   for (const p of PROVIDERS) {
     if (!providerReady(p)) continue;
     try {
+      if (p === 'gateway') {
+        return { provider: p, segments: await retryProvider('gateway', () => gatewayTranscribe(file, offset)) };
+      }
       if (p === 'groq') {
         const r = await retryProvider('groq', () => groqClient().audio.transcriptions.create({
           file: require('fs').createReadStream(file), model: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo',
@@ -227,7 +248,16 @@ TRANSCRIPT:
             { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
             { role: 'user', content: prompt }
           ];
-          if (provider === 'groq') {
+          if (provider === 'gateway') {
+            const { generateText } = await import('ai');
+            const gatewayResult = await retryProvider('gateway', () => generateText({
+              model: 'openai/gpt-oss-120b',
+              messages,
+              temperature: 0.2,
+              maxOutputTokens: 1800
+            }));
+            response = { choices: [{ message: { content: gatewayResult.text } }] };
+          } else if (provider === 'groq') {
             response = await retryProvider('groq', () => groqClient().chat.completions.create({ model: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', messages, temperature: 0.2 }));
           } else if (provider === 'gemini') {
             response = await retryProvider('gemini', () => geminiClient().chat.completions.create({ model: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', messages, temperature: 0.2 }));
@@ -328,9 +358,10 @@ module.exports = async (req, res) => {
     if (typeof url !== 'string' || !/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
       return res.status(400).json({ error: 'Use a valid YouTube URL.' });
     }
-    const hasFree = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
+    const hasGateway = !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
+    const hasDirect = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
-    if (!hasFree && !paid) return res.status(500).json({ error: 'No AI provider is connected. Add GROQ_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.' });
+    if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'This Vercel deployment has no AI Gateway authentication. Enable Vercel OIDC for the project, or add an AI Gateway API key.' });
 
     const id = crypto.randomUUID();
     const { Sandbox } = await import('@vercel/sandbox');
@@ -359,7 +390,7 @@ module.exports = async (req, res) => {
       cmd: 'node',
       args: [workerPath],
       detached: true,
-      env: { GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
