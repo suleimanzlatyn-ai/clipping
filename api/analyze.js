@@ -226,8 +226,104 @@ function makeSrt(segments, start, end) {
   }).join('\\n');
 }
 
+async function opusRequest(path, options = {}) {
+  const key = String(process.env.OPUSCLIP_API_KEY || '');
+  if (!key) throw new Error('OPUSCLIP_API_KEY is not configured.');
+  const response = await fetch('https://api.opus.pro/api' + path, {
+    ...options,
+    headers: {
+      Authorization: 'Bearer ' + key,
+      'Content-Type': 'application/json',
+      ...(process.env.OPUSCLIP_ORG_ID ? { 'x-opus-org-id': process.env.OPUSCLIP_ORG_ID } : {}),
+      ...(options.headers || {})
+    }
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error('OpusClip API ' + response.status + ': ' + body.slice(-1200));
+  try { return JSON.parse(body); } catch { return body; }
+}
+
+async function runOpusImportAndClipping() {
+  await st(6, 'Sending the YouTube URL to the OpusClip import engine…');
+  const created = await opusRequest('/clip-projects', {
+    method: 'POST',
+    body: JSON.stringify({
+      videoUrl: url,
+      curationPref: {
+        model: process.env.OPUSCLIP_MODEL || 'ClipAnything',
+        clipDurations: [[18, 65]],
+        genre: 'Auto',
+        customPrompt: 'Find the strongest standalone short-form moments. Prioritize powerful hooks, curiosity, surprise, humor, emotion, conflict, stories with payoff, useful insights and quotable moments. Avoid greetings, filler, repetition and weak setup. Prefer distinct moments with complete context.',
+        skipCurate: false
+      },
+      renderPref: {
+        layoutAspectRatio: 'portrait',
+        enableCaption: true,
+        enableCaptionAnimation: true,
+        enableCrop: true
+      }
+    })
+  });
+
+  const projectId = String(created.projectId || created.id || created.data?.projectId || '');
+  if (!projectId) throw new Error('OpusClip created the project but returned no project ID.');
+
+  await st(10, 'OpusClip is importing and analyzing the video…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
+
+  const deadline = Date.now() + 45 * 60 * 1000;
+  let project;
+  while (Date.now() < deadline) {
+    project = await opusRequest('/clip-projects/' + encodeURIComponent(projectId));
+    const stage = String(project.stage || project.status || '').toUpperCase();
+    const progress = Number(project.progress || 0);
+    const mapped = stage === 'IMPORT' ? 25 : stage === 'CURATE' ? 45 : stage === 'REFINE' ? 60 : stage === 'RENDER' ? 80 : stage === 'UPLOAD' ? 92 : stage === 'COMPLETE' ? 96 : Math.min(94, 12 + Math.max(0, progress));
+    await st(mapped, 'OpusClip: ' + (stage || 'processing') + '…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
+    if (stage === 'STALLED' || stage === 'FAILED' || stage === 'ERROR') {
+      throw new Error('OpusClip could not process this video: ' + String(project.error || stage));
+    }
+    if (stage === 'COMPLETE') break;
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  if (!project || !['COMPLETE','UPLOAD'].includes(String(project.stage || '').toUpperCase())) {
+    throw new Error('OpusClip processing timed out before the clips became available.');
+  }
+
+  const clips = await opusRequest('/exportable-clips?q=findByProjectId&projectId=' + encodeURIComponent(projectId) + '&pageNum=1&pageSize=50');
+  const list = Array.isArray(clips) ? clips : (clips?.data?.list || clips?.data || []);
+  if (!Array.isArray(list) || !list.length) throw new Error('OpusClip finished but returned no exportable clips.');
+
+  await mkdir(out, { recursive: true });
+  const rendered = [];
+  for (let i = 0; i < Math.min(50, list.length); i++) {
+    const clip = list[i];
+    const uri = String(clip.uriForExport || clip.uriForPreview || '');
+    if (!uri) continue;
+    const response = await fetch(uri);
+    if (!response.ok) continue;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const filename = 'clip-' + String(i + 1).padStart(2, '0') + '.mp4';
+    await writeFile(out + '/' + filename, bytes);
+    rendered.push({
+      rank: i + 1,
+      title: String(clip.title || clip.name || 'Clip ' + (i + 1)),
+      score: Number(clip.score ?? clip.viralityScore ?? clip.hookScore ?? 0),
+      reason: 'Generated and rendered by OpusClip.',
+      url: filename
+    });
+    await st(96 + Math.round(((i + 1) / Math.min(50, list.length)) * 3), 'Downloading clip ' + (i + 1) + ' of ' + Math.min(50, list.length) + '…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
+  }
+  if (!rendered.length) throw new Error('OpusClip returned clips, but none could be downloaded.');
+  await st(100, 'Clips ready.', 'complete', { provider: 'opusclip', externalProjectId: projectId, clips: rendered });
+}
+
 async function main() {
   try {
+    if (process.env.OPUSCLIP_API_KEY) {
+      await mkdir(out, { recursive: true });
+      await st(2, 'Starting the OpusClip-compatible import engine…');
+      await runOpusImportAndClipping();
+      return;
+    }
     if (!PROVIDERS.some(providerReady)) throw new Error('No AI provider is configured on the worker.');
     await mkdir(out, { recursive: true });
     await st(2, 'Starting the analysis worker…');
@@ -478,7 +574,7 @@ module.exports = async (req, res) => {
       cmd: 'sh',
       args: ['-lc', 'node ' + JSON.stringify(workerPath) + ' > ' + JSON.stringify('/workspace/jobs/' + id + '/worker.log') + ' 2>&1'],
       detached: true,
-      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
+      env: { AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY || '', VERCEL_OIDC_TOKEN: gatewayAuth || '', GROQ_API_KEY: process.env.GROQ_API_KEY || '', GEMINI_API_KEY: process.env.GEMINI_API_KEY || '', OPENAI_API_KEY: process.env.OPENAI_API_KEY || '', OPUSCLIP_API_KEY: process.env.OPUSCLIP_API_KEY || '', OPUSCLIP_ORG_ID: process.env.OPUSCLIP_ORG_ID || '', OPUSCLIP_MODEL: process.env.OPUSCLIP_MODEL || 'ClipAnything', YOUTUBE_COOKIES_B64: process.env.YOUTUBE_COOKIES_B64 || '', YOUTUBE_COOKIES: process.env.YOUTUBE_COOKIES || '', YOUTUBE_USER_AGENT: process.env.YOUTUBE_USER_AGENT || '', AI_PROVIDER_ORDER: process.env.AI_PROVIDER_ORDER || 'gateway,groq,gemini,openai', ALLOW_PAID_FALLBACK: process.env.ALLOW_PAID_FALLBACK || 'false', PAID_FALLBACK_MAX_USD: process.env.PAID_FALLBACK_MAX_USD || '0', GATEWAY_TRANSCRIBE_MODEL: process.env.GATEWAY_TRANSCRIBE_MODEL || 'openai/gpt-4o-mini-transcribe', GATEWAY_CLIP_MODEL: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b', GROQ_TRANSCRIBE_MODEL: process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo', GROQ_CLIP_MODEL: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite' }
     });
 
     await sb.runCommand({
