@@ -334,16 +334,16 @@ module.exports = async (req, res) => {
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
     if (!hasFree && !paid) return res.status(500).json({ error: 'No AI provider is connected. Add GROQ_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.' });
 
-    const sb = await Sandbox.getOrCreate({
-      name: 'suleimanzlatyn-worker',
+    const id = crypto.randomUUID();
+    const sb = await Sandbox.create({
+      name: 'clip-job-' + id,
       runtime: 'node24',
       timeout: 45 * 60 * 1000,
       resources: { vcpus: 4 },
       ports: [8787],
-      networkPolicy: { allow: { '*': [] } }
+      networkPolicy: 'allow-all'
     });
 
-    const id = crypto.randomUUID();
     await sb.writeFiles([{
       path: '/workspace/jobs/' + id + '/job.json',
       content: Buffer.from(JSON.stringify({
