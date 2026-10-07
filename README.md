@@ -39,10 +39,10 @@ Never commit real cookies, API keys, or session credentials to GitHub. Never pas
 ## Deploy
 
 1. Import this repository into your Vercel account.
-2. Add the AI provider environment variables in Vercel.
+2. Leave Vercel AI Gateway/OIDC enabled for the default AI path; the first AI Gateway usage includes free monthly credits.
 3. When needed, add the YouTube authentication secrets above in Vercel.
-4. Deploy.
-5. Open the deployed site and paste a YouTube URL you own or are authorized to process.
+4. Deploy from the GitHub repository.
+5. Open the deployed site and paste a YouTube URL you own or are authorized to process, or use Upload video.
 
 ## Processing flow
 
@@ -63,9 +63,7 @@ The downloader does not attempt to bypass YouTube bot verification, CAPTCHA, or 
 The app now has two supported source paths:
 
 1. Authorized YouTube URL: uses the YouTube downloader with Deno/EJS and optional authorized cookies. It does not bypass CAPTCHA or bot verification.
-2. Direct video upload: when YouTube rejects the server, the browser uploads the source directly to Vercel Blob and the worker processes the uploaded file.
+2. Direct video upload: when YouTube rejects the server, the browser uploads the source directly to a temporary Vercel Sandbox HTTP port and the worker processes the local file. This path does not require Vercel Blob.
 
-For direct uploads, create a Vercel Blob store connected to this project. Vercel documents client uploads for files larger than the 4.5 MB Vercel Function request limit, and the Hobby plan includes 1 GB Blob storage plus included operations/data transfer within its limits.
-
-The direct-upload path accepts video files up to 900 MB and deletes the temporary Blob source after processing.
+The direct-upload path accepts video files up to 900 MB. The Sandbox is temporary and the source is deleted after processing.
 
