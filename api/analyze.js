@@ -326,7 +326,7 @@ async function main() {
       await runOpusImportAndClipping();
       return;
     }
-    if (!PROVIDERS.some(providerReady)) throw new Error('No AI provider is configured on the worker.');
+    const smartFallback = !PROVIDERS.some(providerReady) && String(process.env.CLIP_SMART_FALLBACK || '0') === '1';
     await mkdir(out, { recursive: true });
     await st(2, 'Starting the analysis worker…');
     await st(3, 'Preparing the video engine…');
@@ -415,17 +415,95 @@ async function main() {
     await st(16, 'Extracting audio for AI analysis…');
     await cmd('ffmpeg', ['-y','-i',sourcePath,'-vn','-ac','1','-ar','16000','-c:a','libmp3lame','-b:a','96k',out+'/audio.mp3']);
 
-    await st(18, 'Transcribing with automatic provider failover…');
-    const segs = await transcribeInChunks(out + '/audio.mp3');
-    await writeFile(out + '/transcript.json', JSON.stringify(segs));
-
-    const transcriptEnd = segs.length ? segs[segs.length - 1].end : 0;
+    let segs = [];
     const candidates = [];
-    for (let windowStart = 0; windowStart < transcriptEnd; windowStart += 600) {
-      const windowSegs = segs.filter(s => s.end > windowStart && s.start < windowStart + 600);
-      if (!windowSegs.length) continue;
-      const transcript = windowSegs.map((s, i) => i + '|' + s.start.toFixed(2) + '-' + s.end.toFixed(2) + '|' + s.text).join('\\n').slice(0, 19000);
-      const prompt = \`You are the senior editor for a premium short-form clipping studio.
+
+    if (smartFallback) {
+      await st(18, 'No AI key is configured. Running the local smart highlight fallback…');
+      let duration = 0;
+      try {
+        duration = Number((await cmd('ffprobe', ['-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',sourcePath])).trim());
+      } catch {}
+      if (!Number.isFinite(duration) || duration <= 0) throw new Error('Could not read the uploaded video duration.');
+
+      let stderr = '';
+      try {
+        const result = await ex('ffmpeg', [
+          '-hide_banner','-i',sourcePath,
+          '-af','silencedetect=noise=-32dB:d=0.35',
+          '-f','null','-'
+        ], { maxBuffer: 1024 * 1024 * 20 });
+        stderr = String(result.stderr || '');
+      } catch (e) {
+        stderr = String(e?.stderr || '');
+      }
+
+      const silenceStarts = [];
+      const silenceEnds = [];
+      for (const m of stderr.matchAll(/silence_start:\s*([0-9.]+)/g)) silenceStarts.push(Number(m[1]));
+      for (const m of stderr.matchAll(/silence_end:\s*([0-9.]+)/g)) silenceEnds.push(Number(m[1]));
+
+      const active = [];
+      let cursor = 0;
+      for (let i = 0; i < Math.max(silenceStarts.length, silenceEnds.length); i++) {
+        const ss = Number.isFinite(silenceStarts[i]) ? silenceStarts[i] : duration;
+        if (ss > cursor + 6) active.push([cursor, Math.min(ss, duration)]);
+        const se = Number.isFinite(silenceEnds[i]) ? silenceEnds[i] : ss;
+        cursor = Math.max(cursor, se);
+      }
+      if (cursor < duration - 6) active.push([cursor, duration]);
+      if (!active.length) active.push([0, duration]);
+
+      const seen = [];
+      for (const interval of active.sort((x,y) => (y[1]-y[0]) - (x[1]-x[0]))) {
+        const length = interval[1] - interval[0];
+        if (length < 10) continue;
+        const clipLen = Math.max(12, Math.min(55, length * 0.85));
+        const center = (interval[0] + interval[1]) / 2;
+        const start = Math.max(0, Math.min(duration - 12, center - clipLen / 2));
+        const end = Math.min(duration, start + clipLen);
+        if (seen.some(x => Math.max(x.start,start) < Math.min(x.end,end) - 3)) continue;
+        seen.push({start,end});
+        candidates.push({
+          start,
+          end,
+          title: 'Highlight ' + (candidates.length + 1),
+          score: Math.max(55, Math.min(94, Math.round(60 + clipLen * 0.5))),
+          reason: 'Selected from a strong non-silent section of the video.'
+        });
+        if (candidates.length >= 50) break;
+      }
+
+      if (candidates.length < 50) {
+        const target = Math.min(50, Math.max(1, Math.floor(duration / 12)));
+        for (let i = 0; i < target && candidates.length < 50; i++) {
+          const center = ((i + 0.5) / target) * duration;
+          const len = Math.min(35, Math.max(12, duration / Math.max(1, target) * 1.2));
+          const start = Math.max(0, Math.min(duration - 12, center - len / 2));
+          const end = Math.min(duration, start + len);
+          if (candidates.some(x => Math.max(x.start,start) < Math.min(x.end,end) - 3)) continue;
+          candidates.push({
+            start,
+            end,
+            title: 'Highlight ' + (candidates.length + 1),
+            score: 50,
+            reason: 'Coverage fallback used to avoid leaving unused portions of the video.'
+          });
+        }
+      }
+      segs = [];
+      await writeFile(out + '/transcript.json', '[]');
+    } else {
+      await st(18, 'Transcribing with automatic provider failover…');
+      segs = await transcribeInChunks(out + '/audio.mp3');
+      await writeFile(out + '/transcript.json', JSON.stringify(segs));
+
+      const transcriptEnd = segs.length ? segs[segs.length - 1].end : 0;
+      for (let windowStart = 0; windowStart < transcriptEnd; windowStart += 600) {
+        const windowSegs = segs.filter(s => s.end > windowStart && s.start < windowStart + 600);
+        if (!windowSegs.length) continue;
+        const transcript = windowSegs.map((s, i) => i + '|' + s.start.toFixed(2) + '-' + s.end.toFixed(2) + '|' + s.text).join('\\n').slice(0, 19000);
+        const prompt = \`You are the senior editor for a premium short-form clipping studio.
 
 Select up to 10 DISTINCT moments from this transcript that have the strongest potential as standalone short-form videos.
 
@@ -439,54 +517,55 @@ Return ONLY valid JSON:
 Use only the supplied timestamps. Score 0-100.
 
 TRANSCRIPT:
-\${transcript}\`;
+\\\${transcript}\`;
 
-      let response;
-      const errors = [];
-      for (const provider of PROVIDERS) {
-        if (!providerReady(provider)) continue;
-        try {
-          const messages = [
-            { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
-            { role: 'user', content: prompt }
-          ];
-          if (provider === 'gateway') {
-            const { generateText } = await import('ai');
-            const gatewayResult = await retryProvider('gateway', () => generateText({
-              model: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b',
-              messages,
-              temperature: 0.2,
-              maxOutputTokens: 1800
-            }));
-            response = { choices: [{ message: { content: gatewayResult.text } }] };
-          } else if (provider === 'groq') {
-            response = await retryProvider('groq', () => groqClient().chat.completions.create({ model: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', messages, temperature: 0.2 }));
-          } else if (provider === 'gemini') {
-            response = await retryProvider('gemini', () => geminiClient().chat.completions.create({ model: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', messages, temperature: 0.2 }));
-          } else {
-            response = await retryProvider('openai', () => paidClient().chat.completions.create({ model: 'gpt-5.4-mini', messages, temperature: 0.2, response_format: { type: 'json_object' } }));
-            estimatedPaidUsd += 0.02;
+        let response;
+        const errors = [];
+        for (const provider of PROVIDERS) {
+          if (!providerReady(provider)) continue;
+          try {
+            const messages = [
+              { role: 'system', content: 'You are an expert short-form video editor. Output only valid JSON.' },
+              { role: 'user', content: prompt }
+            ];
+            if (provider === 'gateway') {
+              const { generateText } = await import('ai');
+              const gatewayResult = await retryProvider('gateway', () => generateText({
+                model: process.env.GATEWAY_CLIP_MODEL || 'openai/gpt-oss-120b',
+                messages,
+                temperature: 0.2,
+                maxOutputTokens: 1800
+              }));
+              response = { choices: [{ message: { content: gatewayResult.text } }] };
+            } else if (provider === 'groq') {
+              response = await retryProvider('groq', () => groqClient().chat.completions.create({ model: process.env.GROQ_CLIP_MODEL || 'openai/gpt-oss-120b', messages, temperature: 0.2 }));
+            } else if (provider === 'gemini') {
+              response = await retryProvider('gemini', () => geminiClient().chat.completions.create({ model: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite', messages, temperature: 0.2 }));
+            } else {
+              response = await retryProvider('openai', () => paidClient().chat.completions.create({ model: 'gpt-5.4-mini', messages, temperature: 0.2, response_format: { type: 'json_object' } }));
+              estimatedPaidUsd += 0.02;
+            }
+            break;
+          } catch (e) {
+            errors.push(provider + ': ' + (e?.message || String(e)));
           }
-          break;
-        } catch (e) {
-          errors.push(provider + ': ' + (e?.message || String(e)));
         }
-      }
-      if (!response) throw new Error('All clip-selection providers failed for window ' + windowStart + '. ' + errors.join(' | '));
-      const parsed = parseJson(response.choices?.[0]?.message?.content || '{}');
-      for (const p of (Array.isArray(parsed.clips) ? parsed.clips : []).slice(0, 10)) {
-        const start = Number(p.start), end = Number(p.end);
-        if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-          candidates.push({
-            start: Math.max(0, start - 1.2),
-            end: Math.max(start + 12, Math.min(end + 0.8, start + 65)),
-            title: String(p.title || 'Untitled clip').slice(0, 100),
-            score: Math.max(0, Math.min(100, Math.round(Number(p.score) || 0))),
-            reason: String(p.reason || '').slice(0, 180)
-          });
+        if (!response) throw new Error('All clip-selection providers failed for window ' + windowStart + '. ' + errors.join(' | '));
+        const parsed = parseJson(response.choices?.[0]?.message?.content || '{}');
+        for (const p of (Array.isArray(parsed.clips) ? parsed.clips : []).slice(0, 10)) {
+          const start = Number(p.start), end = Number(p.end);
+          if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+            candidates.push({
+              start: Math.max(0, start - 1.2),
+              end: Math.max(start + 12, Math.min(end + 0.8, start + 65)),
+              title: String(p.title || 'Untitled clip').slice(0, 100),
+              score: Math.max(0, Math.min(100, Math.round(Number(p.score) || 0))),
+              reason: String(p.reason || '').slice(0, 180)
+            });
+          }
         }
+        await st(38 + Math.min(10, Math.round((windowStart / Math.max(1, transcriptEnd)) * 10)), 'AI is finding the strongest moments across the video…');
       }
-      await st(38 + Math.min(10, Math.round((windowStart / Math.max(1, transcriptEnd)) * 10)), 'AI is finding the strongest moments across the video…');
     }
 
     candidates.sort((a, b) => b.score - a.score);
