@@ -2,8 +2,9 @@
   "name": "suleimanzlatyn",
   "private": true,
   "dependencies": {
-    "@vercel/sandbox": "latest",
+    "@google/genai": "latest",
     "@vercel/oidc": "latest",
+    "@vercel/sandbox": "latest",
     "openai": "latest"
   }
 }
