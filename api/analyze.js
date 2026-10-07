@@ -216,7 +216,7 @@ Return ONLY valid JSON:
 Use only the supplied timestamps. Score 0-100.
 
 TRANSCRIPT:
-${transcript}`;
+\${transcript}`;
 
       let response;
       const errors = [];
@@ -275,7 +275,7 @@ ${transcript}`;
     const finalPicks = picks.slice(0, 50);
     if (!finalPicks.length) throw new Error('No provider returned usable clip selections.');
 
-    await st(42, `Rendering ${finalPicks.length} selected clips…`);
+    await st(42, `Rendering \${finalPicks.length} selected clips…`);
     const done = [];
     let cursor = 0;
 
