@@ -12,7 +12,7 @@ const job = '__JOB_ID__';
 const url = __URL__;
 const sourceUrl = __SOURCE_URL__;
 const directUploadPath = __DIRECT_UPLOAD_PATH__;
-const root = '/workspace';
+const root = process.env.CLIP_WORKSPACE_ROOT || '/workspace';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
 const jf = dir + '/job.json';
@@ -582,10 +582,13 @@ module.exports = async (req, res) => {
     const hasGateway = !!gatewayAuth;
     const hasDirect = !!process.env.GROQ_API_KEY || !!process.env.GEMINI_API_KEY;
     const paid = String(process.env.ALLOW_PAID_FALLBACK || 'false').toLowerCase() === 'true' && !!process.env.OPENAI_API_KEY && Number(process.env.PAID_FALLBACK_MAX_USD || 0) > 0;
-    if (!hasGateway && !hasDirect && !paid) return res.status(500).json({ error: 'No AI provider is configured. Enable Vercel AI Gateway/OIDC or configure Groq/Gemini.' });
+    if (!hasGateway && !hasDirect && !paid) {
+      // Render/free fallback: the worker can still generate smart highlight candidates from audio when no AI key is configured.
+      process.env.CLIP_SMART_FALLBACK = '1';
+    }
 
     if (uploaded) {
-      const { Sandbox } = await import('@vercel/sandbox');
+      const Sandbox = process.env.RENDER === '1' ? require('../lib/local-sandbox').LocalSandbox : (await import('@vercel/sandbox')).Sandbox;
       const sb = await Sandbox.get({ name: 'clip-job-' + jobId });
       try {
         await sb.runCommand({ cmd: 'sh', args: ['-lc', 'test -s ' + JSON.stringify('/workspace/output/' + jobId + '/source.mp4')] });
@@ -610,12 +613,12 @@ module.exports = async (req, res) => {
           GEMINI_TRANSCRIBE_MODEL: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe', GEMINI_CLIP_MODEL: process.env.GEMINI_CLIP_MODEL || 'gemini-3.5-flash-lite'
         }
       });
-      await sb.runCommand({ cmd: 'python3', args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'], detached: true, env: {} });
+      if (process.env.RENDER !== '1') await sb.runCommand({ cmd: 'python3', args: ['-m', 'http.server', '8787', '--directory', '/workspace/output'], detached: true, env: {} });
       return res.json({ jobId, status: 'queued' });
     }
 
     const id = crypto.randomUUID();
-    const { Sandbox } = await import('@vercel/sandbox');
+    const Sandbox = process.env.RENDER === '1' ? require('../lib/local-sandbox').LocalSandbox : (await import('@vercel/sandbox')).Sandbox;
     const sb = await Sandbox.create({
       name: 'clip-job-' + id,
       persistent: true,
