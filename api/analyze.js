@@ -60,7 +60,7 @@ async function retryProvider(name, fn) {
 async function geminiTranscribe(file, offset) {
   const { GoogleGenAI } = require('@google/genai');
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const uploaded = await retryProvider('gemini', () => ai.files.upload({ file, config: { mimeType: 'audio/mp3' } }));
+  const uploaded = await retryProvider('gemini', () => ai.files.upload({ file, config: { mime_type: 'audio/mp3' } }));
   const interaction = await retryProvider('gemini', () => ai.interactions.create({
     model: process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3.5-transcribe',
     input: [{ type: 'audio', uri: uploaded.uri, mime_type: uploaded.mimeType }],
@@ -203,7 +203,7 @@ async function main() {
     for (let windowStart = 0; windowStart < transcriptEnd; windowStart += 600) {
       const windowSegs = segs.filter(s => s.end > windowStart && s.start < windowStart + 600);
       if (!windowSegs.length) continue;
-      const transcript = windowSegs.map((s, i) => i + '|' + s.start.toFixed(2) + '-' + s.end.toFixed(2) + '|' + s.text).join('\\n').slice(0, 26000);
+      const transcript = windowSegs.map((s, i) => i + '|' + s.start.toFixed(2) + '-' + s.end.toFixed(2) + '|' + s.text).join('\\n').slice(0, 19000);
       const prompt = `You are the senior editor for a premium short-form clipping studio.
 
 Select up to 10 DISTINCT moments from this transcript that have the strongest potential as standalone short-form videos.
