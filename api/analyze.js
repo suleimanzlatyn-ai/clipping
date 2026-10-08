@@ -535,7 +535,7 @@ Select up to 10 DISTINCT moments from this transcript that have the strongest po
 
 Prioritize immediate hooks, curiosity, emotional intensity, surprise, humor, conflict, memorable stories with payoff, useful insight, quotability, shareability, self-contained context, and strong beginnings/endings.
 
-Reject greetings, filler, repetition, rambling, sponsor reads, weak setup and moments that require unseen context. Target 18-65 seconds, preferably 25-55 seconds. Avoid overlaps.
+Reject greetings, filler, repetition, rambling, sponsor reads, weak setup and moments that require unseen context. Target \${minClipDuration}-\${maxClipDuration} seconds per clip. Vary clip lengths naturally inside that range and avoid overlaps.
 
 Return ONLY valid JSON:
 {"clips":[{"start":12.3,"end":48.7,"title":"short compelling title","score":96,"reason":"short reason"}]}
@@ -667,9 +667,12 @@ main();`;
 module.exports = async (req, res) => {
   try {
     const body = req.body || {};
-    const clipCount = Math.max(1, Math.min(50, Math.round(Number(body.clipCount ?? 50))));
-    let minDuration = Math.max(5, Math.min(180, Math.round(Number(body.minDuration ?? 12))));
-    let maxDuration = Math.max(5, Math.min(180, Math.round(Number(body.maxDuration ?? 15))));
+    const requestedCount = Number(body.clipCount);
+    const requestedMin = Number(body.minDuration);
+    const requestedMax = Number(body.maxDuration);
+    const clipCount = Number.isFinite(requestedCount) ? Math.max(1, Math.min(50, Math.round(requestedCount))) : 50;
+    let minDuration = Number.isFinite(requestedMin) ? Math.max(5, Math.min(180, Math.round(requestedMin))) : 12;
+    let maxDuration = Number.isFinite(requestedMax) ? Math.max(5, Math.min(180, Math.round(requestedMax))) : 15;
     if (maxDuration < minDuration) [minDuration, maxDuration] = [maxDuration, minDuration];
     const rawUrl = body.url;
     const rawJobId = body.jobId;
