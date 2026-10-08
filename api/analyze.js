@@ -12,6 +12,9 @@ const job = '__JOB_ID__';
 const url = __URL__;
 const sourceUrl = __SOURCE_URL__;
 const directUploadPath = __DIRECT_UPLOAD_PATH__;
+const requestedClipCount = __CLIP_COUNT__;
+const minClipDuration = __MIN_DURATION__;
+const maxClipDuration = __MAX_DURATION__;
 const root = process.env.CLIP_WORKSPACE_ROOT || '/vercel/sandbox';
 const dir = root + '/jobs/' + job;
 const out = root + '/output/' + job;
@@ -219,6 +222,22 @@ async function transcribeInChunks(audio) {
   return all;
 }
 
+function clipLengthFor(index) {
+  const span = Math.max(0, maxClipDuration - minClipDuration);
+  if (!span) return minClipDuration;
+  return minClipDuration + ((index * 7) % (span + 1));
+}
+
+function fitToRequestedRange(start, end, duration, index) {
+  const len = clipLengthFor(index);
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : end;
+  const target = Math.min(len, safeDuration);
+  const center = (Number(start) + Number(end)) / 2;
+  const maxStart = Math.max(0, safeDuration - target);
+  const s = Math.max(0, Math.min(maxStart, center - target / 2));
+  return { start: s, end: Math.min(safeDuration, s + target) };
+}
+
 function makeSrt(segments, start, end) {
   const selected = segments.filter(s => s.end > start && s.start < end);
   return selected.map((s, i) => {
@@ -253,7 +272,7 @@ async function runOpusImportAndClipping() {
       videoUrl: url,
       curationPref: {
         model: process.env.OPUSCLIP_MODEL || 'ClipAnything',
-        clipDurations: [[18, 65]],
+        clipDurations: [[minClipDuration, maxClipDuration]],
         genre: 'Auto',
         customPrompt: 'Find the strongest standalone short-form moments. Prioritize powerful hooks, curiosity, surprise, humor, emotion, conflict, stories with payoff, useful insights and quotable moments. Avoid greetings, filler, repetition and weak setup. Prefer distinct moments with complete context.',
         skipCurate: false
@@ -296,7 +315,7 @@ async function runOpusImportAndClipping() {
 
   await mkdir(out, { recursive: true });
   const rendered = [];
-  for (let i = 0; i < Math.min(50, list.length); i++) {
+  for (let i = 0; i < Math.min(requestedClipCount, list.length); i++) {
     const clip = list[i];
     const uri = String(clip.uriForExport || clip.uriForPreview || '');
     if (!uri) continue;
@@ -312,7 +331,7 @@ async function runOpusImportAndClipping() {
       reason: 'Generated and rendered by OpusClip.',
       url: filename
     });
-    await st(96 + Math.round(((i + 1) / Math.min(50, list.length)) * 3), 'Downloading clip ' + (i + 1) + ' of ' + Math.min(50, list.length) + '…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
+    await st(96 + Math.round(((i + 1) / Math.min(50, list.length)) * 3), 'Downloading clip ' + (i + 1) + ' of ' + Math.min(requestedClipCount, list.length) + '…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
   }
   if (!rendered.length) throw new Error('OpusClip returned clips, but none could be downloaded.');
   await st(100, 'Clips ready.', 'complete', { provider: 'opusclip', externalProjectId: projectId, clips: rendered });
@@ -415,6 +434,11 @@ async function main() {
     await st(16, 'Extracting audio for AI analysis…');
     await cmd('ffmpeg', ['-y','-i',sourcePath,'-vn','-ac','1','-ar','16000','-c:a','libmp3lame','-b:a','96k',out+'/audio.mp3']);
 
+    let sourceDuration = 0;
+    try { sourceDuration = Number((await cmd('ffprobe', ['-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',sourcePath])).trim()); } catch {}
+    if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) throw new Error('Could not read the source video duration.');
+    if (sourceDuration + 0.01 < minClipDuration) throw new Error('The source video is shorter than the minimum clip duration you selected (' + minClipDuration + 's).');
+
     let segs = [];
     const candidates = [];
 
@@ -458,10 +482,11 @@ async function main() {
       for (const interval of active.sort((x,y) => (y[1]-y[0]) - (x[1]-x[0]))) {
         const length = interval[1] - interval[0];
         if (length < 10) continue;
-        const clipLen = Math.max(12, Math.min(55, length * 0.85));
+        const clipLen = Math.min(clipLengthFor(candidates.length), Math.max(0.1, length));
         const center = (interval[0] + interval[1]) / 2;
-        const start = Math.max(0, Math.min(duration - 12, center - clipLen / 2));
-        const end = Math.min(duration, start + clipLen);
+        const fitted = fitToRequestedRange(center - clipLen / 2, center + clipLen / 2, duration, candidates.length);
+        const start = fitted.start;
+        const end = fitted.end;
         if (seen.some(x => Math.max(x.start,start) < Math.min(x.end,end) - 3)) continue;
         seen.push({start,end});
         candidates.push({
@@ -471,16 +496,17 @@ async function main() {
           score: Math.max(55, Math.min(94, Math.round(60 + clipLen * 0.5))),
           reason: 'Selected from a strong non-silent section of the video.'
         });
-        if (candidates.length >= 50) break;
+        if (candidates.length >= requestedClipCount) break;
       }
 
       if (candidates.length < 50) {
-        const target = Math.min(50, Math.max(1, Math.floor(duration / 12)));
+        const target = Math.min(requestedClipCount, Math.max(1, Math.floor(duration / Math.max(1, minClipDuration))));
         for (let i = 0; i < target && candidates.length < 50; i++) {
           const center = ((i + 0.5) / target) * duration;
-          const len = Math.min(35, Math.max(12, duration / Math.max(1, target) * 1.2));
-          const start = Math.max(0, Math.min(duration - 12, center - len / 2));
-          const end = Math.min(duration, start + len);
+          const len = Math.min(clipLengthFor(candidates.length), Math.max(0.1, duration));
+          const fitted = fitToRequestedRange(center - len / 2, center + len / 2, duration, candidates.length);
+          const start = fitted.start;
+          const end = fitted.end;
           if (candidates.some(x => Math.max(x.start,start) < Math.min(x.end,end) - 3)) continue;
           candidates.push({
             start,
@@ -556,8 +582,8 @@ TRANSCRIPT:
           const start = Number(p.start), end = Number(p.end);
           if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
             candidates.push({
-              start: Math.max(0, start - 1.2),
-              end: Math.max(start + 12, Math.min(end + 0.8, start + 65)),
+              start: fitToRequestedRange(start, end, sourceDuration, candidates.length).start,
+              end: fitToRequestedRange(start, end, sourceDuration, candidates.length).end,
               title: String(p.title || 'Untitled clip').slice(0, 100),
               score: Math.max(0, Math.min(100, Math.round(Number(p.score) || 0))),
               reason: String(p.reason || '').slice(0, 180)
@@ -573,17 +599,17 @@ TRANSCRIPT:
     for (const candidate of candidates) {
       const overlap = picks.some(x => Math.max(x.start, candidate.start) < Math.min(x.end, candidate.end) - 2);
       if (!overlap) picks.push(candidate);
-      if (picks.length >= 50) break;
+      if (picks.length >= requestedClipCount) break;
     }
     if (picks.length < 50) {
       for (const candidate of candidates) {
         if (!picks.includes(candidate)) picks.push(candidate);
-        if (picks.length >= 50) break;
+        if (picks.length >= requestedClipCount) break;
       }
     }
     picks.sort((a, b) => b.score - a.score);
     picks.forEach((p, i) => p.rank = i + 1);
-    const finalPicks = picks.slice(0, 50);
+    const finalPicks = picks.slice(0, requestedClipCount);
     if (!finalPicks.length) throw new Error('No provider returned usable clip selections.');
 
     await st(42, \`Rendering \${finalPicks.length} selected clips…\`);
@@ -627,7 +653,7 @@ TRANSCRIPT:
     try { await unlink(out + '/transcript.json'); } catch {}
     await writeFile(jf, JSON.stringify({
       id: job, status: 'done', progress: 100,
-      message: \`Finished \${done.length} clips.\`,
+      message: \`Finished \${done.length} clips at \${minClipDuration}-\${maxClipDuration}s each (varied lengths).\`,
       clips: done
     }));
   } catch (e) {
@@ -641,6 +667,10 @@ main();`;
 module.exports = async (req, res) => {
   try {
     const body = req.body || {};
+    const clipCount = Math.max(1, Math.min(50, Math.round(Number(body.clipCount ?? 50))));
+    let minDuration = Math.max(5, Math.min(180, Math.round(Number(body.minDuration ?? 12))));
+    let maxDuration = Math.max(5, Math.min(180, Math.round(Number(body.maxDuration ?? 15))));
+    if (maxDuration < minDuration) [minDuration, maxDuration] = [maxDuration, minDuration];
     const rawUrl = body.url;
     const rawJobId = body.jobId;
     const uploaded = body.uploaded === true;
@@ -674,7 +704,7 @@ module.exports = async (req, res) => {
       } catch {
         return res.status(409).json({ error: 'The upload has not finished yet.' });
       }
-      const script = WORKER.replaceAll('__JOB_ID__', jobId).replace('__URL__', JSON.stringify('')).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('/vercel/sandbox/output/' + jobId + '/source.mp4')).replaceAll('\\${', '${').replaceAll('\\`', '`');
+      const script = WORKER.replaceAll('__JOB_ID__', jobId).replace('__URL__', JSON.stringify('')).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('/vercel/sandbox/output/' + jobId + '/source.mp4')).replace('__CLIP_COUNT__', String(clipCount)).replace('__MIN_DURATION__', String(minDuration)).replace('__MAX_DURATION__', String(maxDuration)).replaceAll('\\${', '${').replaceAll('\\`', '`');
       const workerPath = '/vercel/sandbox/run-' + jobId + '.mjs';
       await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
       await sb.runCommand({
@@ -716,7 +746,7 @@ module.exports = async (req, res) => {
       }))
     }]);
 
-    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('')).replaceAll('\\${', '${').replaceAll('\\`', '`');
+    const script = WORKER.replaceAll('__JOB_ID__', id).replace('__URL__', JSON.stringify(url)).replace('__SOURCE_URL__', JSON.stringify('')).replace('__DIRECT_UPLOAD_PATH__', JSON.stringify('')).replace('__CLIP_COUNT__', String(clipCount)).replace('__MIN_DURATION__', String(minDuration)).replace('__MAX_DURATION__', String(maxDuration)).replaceAll('\\${', '${').replaceAll('\\`', '`');
     const workerPath = '/vercel/sandbox/run-' + id + '.mjs';
     await sb.writeFiles([{ path: workerPath, content: Buffer.from(script) }]);
 
