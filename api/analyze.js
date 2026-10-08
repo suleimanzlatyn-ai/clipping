@@ -331,7 +331,7 @@ async function runOpusImportAndClipping() {
       reason: 'Generated and rendered by OpusClip.',
       url: filename
     });
-    await st(96 + Math.round(((i + 1) / Math.min(50, list.length)) * 3), 'Downloading clip ' + (i + 1) + ' of ' + Math.min(requestedClipCount, list.length) + '…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
+    await st(96 + Math.round(((i + 1) / Math.min(requestedClipCount, list.length)) * 3), 'Downloading clip ' + (i + 1) + ' of ' + Math.min(requestedClipCount, list.length) + '…', 'processing', { provider: 'opusclip', externalProjectId: projectId });
   }
   if (!rendered.length) throw new Error('OpusClip returned clips, but none could be downloaded.');
   await st(100, 'Clips ready.', 'complete', { provider: 'opusclip', externalProjectId: projectId, clips: rendered });
@@ -499,9 +499,9 @@ async function main() {
         if (candidates.length >= requestedClipCount) break;
       }
 
-      if (candidates.length < 50) {
+      if (candidates.length < requestedClipCount) {
         const target = Math.min(requestedClipCount, Math.max(1, Math.floor(duration / Math.max(1, minClipDuration))));
-        for (let i = 0; i < target && candidates.length < 50; i++) {
+        for (let i = 0; i < target && candidates.length < requestedClipCount; i++) {
           const center = ((i + 0.5) / target) * duration;
           const len = Math.min(clipLengthFor(candidates.length), Math.max(0.1, duration));
           const fitted = fitToRequestedRange(center - len / 2, center + len / 2, duration, candidates.length);
@@ -601,7 +601,7 @@ TRANSCRIPT:
       if (!overlap) picks.push(candidate);
       if (picks.length >= requestedClipCount) break;
     }
-    if (picks.length < 50) {
+    if (picks.length < requestedClipCount) {
       for (const candidate of candidates) {
         if (!picks.includes(candidate)) picks.push(candidate);
         if (picks.length >= requestedClipCount) break;
